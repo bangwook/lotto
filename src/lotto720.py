@@ -35,16 +35,24 @@ def run(playwright: Playwright) -> None:
         # Access the game iframe
         # The actual game UI is loaded inside this iframe
         print("Waiting for game iframe to load...")
+        # Wait for the iframe element to be visible on the main page
+        try:
+            page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
+        except Exception:
+            print("⚠️ Iframe #ifrm_tab not visible. Page source might be different.")
+        
         frame = page.frame_locator("#ifrm_tab")
         
         # Wait for an element inside the frame explicitly to ensure it's ready
         try:
-             # Wait for the balance input to be attached
-             frame.locator("#curdeposit").wait_for(state="attached", timeout=20000)
+             # Wait for either the hidden balance input OR the visible balance text
+             # This makes it robust if one is missing or slow
+             frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
         except Exception:
              print("⚠️ Timeout waiting for iframe content. Retrying navigation...")
              page.reload()
-             frame.locator("#curdeposit").wait_for(state="attached", timeout=20000)
+             page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
+             frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
 
         print('✅ Navigated to Lotto 720 Game Frame')
         
