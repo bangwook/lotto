@@ -22,8 +22,8 @@ def get_balance(page: Page) -> dict:
         }
     """
     # Navigate to My Page
-    page.goto("https://www.dhlottery.co.kr/mypage/home")
-    page.wait_for_load_state("networkidle")
+    page.goto("https://www.dhlottery.co.kr/mypage/home", timeout=30000, wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle", timeout=30000)
     
     # Get deposit balance (예치금 잔액)
     # Selector: #totalAmt (contains only number like "35,000")
