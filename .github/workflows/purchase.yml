@@ -38,15 +38,13 @@ jobs:
     - name: Run Lotto Purchase Workflow
       env:
         PYTHONPATH: src
-        VENV_PYTHON: python  # Use system python set up by actions
       run: |
-        chmod +x scripts/purchase.sh
         # 디버그: 환경변수 확인 (값은 숨김)
         echo "USER_ID set: ${{ secrets.USER_ID != '' }}"
         echo "PASSWD set: ${{ secrets.PASSWD != '' }}"
-        # 직접 balance.py 실행하여 상세 에러 확인
-        python src/balance.py || true
-        bash scripts/purchase.sh
+        echo "AUTO_GAMES: ${{ secrets.AUTO_GAMES || '0' }}"
+        # 통합 스크립트 실행 (한 번 로그인으로 모든 작업 수행)
+        python src/purchase_all.py
 
     - name: Upload debug screenshots
       if: always()
