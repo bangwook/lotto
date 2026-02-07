@@ -108,7 +108,9 @@ def run(playwright: Playwright, auto_games: int, manual_numbers: list) -> None:
     
     # Perform login
     try:
+        print("🎫 Lotto645: Starting login...")
         login(page)
+        print("🎫 Lotto645: Login successful")
 
         # Navigate to game page
         page.goto(url="https://ol.dhlottery.co.kr/olotto/game/game645.do", timeout=30000, wait_until="domcontentloaded")

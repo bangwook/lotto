@@ -50,7 +50,7 @@ def login(page: Page) -> None:
         raise ValueError("❌ USER_ID or PASSWD not found in environment variables.")
 
     print('Starting login process...')
-    page.goto("https://www.dhlottery.co.kr/login", timeout=30000, wait_until="domcontentloaded")
+    page.goto("https://www.dhlottery.co.kr/login", timeout=60000, wait_until="domcontentloaded")
 
     # Debug: 로그인 페이지 스크린샷
     page.screenshot(path="debug_login_page.png")
