@@ -11,10 +11,10 @@ from login import login
 def get_balance(page: Page) -> dict:
     """
     마이페이지에서 예치금 잔액과 구매가능 금액을 조회합니다.
-    
+
     Args:
         page: 로그인된 Playwright Page 객체
-    
+
     Returns:
         dict: {
             'deposit_balance': int,  # 예치금 잔액 (원)
@@ -24,7 +24,12 @@ def get_balance(page: Page) -> dict:
     # Navigate to My Page
     page.goto("https://www.dhlottery.co.kr/mypage/home", timeout=30000, wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle", timeout=30000)
-    
+
+    # Debug: 현재 페이지 URL과 스크린샷 저장
+    print(f"📍 Current URL: {page.url}")
+    page.screenshot(path="debug_mypage.png")
+    print("📸 Screenshot saved: debug_mypage.png")
+
     # Get deposit balance (예치금 잔액)
     # Selector: #totalAmt (contains only number like "35,000")
     deposit_el = page.locator("#totalAmt")
