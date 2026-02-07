@@ -3,8 +3,8 @@ name: Lotto Purchase (Run on GitHub)
 on:
   workflow_dispatch:
   schedule:
-     # 매주 토요일 오전 9시에 실행 KST (UTC 00:00)
-     - cron: '0 9 * * 6'
+     # 매주 금요일 저녁 10시 KST (UTC 13:00)
+     - cron: '0 13 * * 5'
 
 jobs:
   purchase:
