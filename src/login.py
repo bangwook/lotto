@@ -57,7 +57,14 @@ def login(page: Page) -> None:
     print("📸 Screenshot saved: debug_login_page.png")
 
     page.locator("#inpUserId").fill(USER_ID)
-    page.locator("#inpUserPswdEncn").fill(PASSWD)
+
+    # Password: use press_sequentially() to trigger keydown/keypress/keyup events.
+    # The site's security plugin encrypts keystrokes via keyboard event handlers.
+    # fill() bypasses these events, sending unencrypted password which the server rejects.
+    pwd_field = page.locator("#inpUserPswdEncn")
+    pwd_field.click()
+    pwd_field.press_sequentially(PASSWD, delay=100)
+
     page.click("#btnLogin")
 
     # Wait for login to complete
