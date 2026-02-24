@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 통합 구매 스크립트 - 한 번의 로그인으로 모든 작업 수행
-잔액 확인 → (필요시 충전) → 로또 구매
+잔액 확인 → (필요시 충전) → 로또 구매 → Discord 알림
 """
 import json
 import re
@@ -12,6 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
+from notify import send_notification
 
 # .env loading is handled by login module import
 
@@ -41,8 +42,52 @@ def get_balance(page: Page) -> dict:
     }
 
 
-def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> bool:
-    """로또 6/45를 구매합니다."""
+def extract_game_numbers(page: Page) -> list:
+    """선택된 게임 번호를 페이지에서 추출합니다."""
+    try:
+        games = page.evaluate("""
+            () => {
+                const games = [];
+
+                // Method 1: Find rows in the selected game table
+                const rows = document.querySelectorAll(
+                    '#tblNum tbody tr, .tbl_display tbody tr'
+                );
+                for (const row of rows) {
+                    const nums = [];
+                    row.querySelectorAll('span[class*="ball"]').forEach(el => {
+                        const n = parseInt(el.textContent.trim());
+                        if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
+                    });
+                    if (nums.length === 6) games.push(nums);
+                }
+
+                // Method 2: Look for .ball_645.lrg (display area, not selection grid)
+                if (games.length === 0) {
+                    let current = [];
+                    document.querySelectorAll('.ball_645.lrg').forEach(el => {
+                        const n = parseInt(el.textContent.trim());
+                        if (!isNaN(n) && n >= 1 && n <= 45) {
+                            current.push(n);
+                            if (current.length === 6) {
+                                games.push([...current]);
+                                current = [];
+                            }
+                        }
+                    });
+                }
+
+                return games;
+            }
+        """)
+        return games if games else []
+    except Exception as e:
+        print(f"⚠️ 번호 추출 실패: {e}")
+        return []
+
+
+def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
+    """로또 6/45를 구매합니다. 결과를 dict로 반환합니다."""
     # Navigate to game page
     page.goto("https://ol.dhlottery.co.kr/olotto/game/game645.do", timeout=60000, wait_until="domcontentloaded")
     print('✅ Navigated to Lotto 6/45 page')
@@ -97,18 +142,26 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> bool:
     total_games = len(manual_numbers) + auto_games
     if total_games == 0:
         print('⚠️  No games to purchase!')
-        return False
+        return {'success': False, 'numbers': [], 'details': '구매할 게임 없음'}
+
+    # Extract selected numbers before purchase
+    time.sleep(1)
+    numbers = extract_game_numbers(page)
+    if not numbers and manual_numbers:
+        # Fallback: use known manual numbers (auto numbers unknown)
+        numbers = [list(game) for game in manual_numbers]
+    print(f'🎱 추출된 번호: {numbers}')
 
     # Verify payment amount
-    time.sleep(1)
     payment_amount_el = page.locator("#payAmt")
     payment_text = payment_amount_el.inner_text().strip()
     payment_amount = int(re.sub(r'[^0-9]', '', payment_text))
     expected_amount = total_games * 1000
 
     if payment_amount != expected_amount:
-        print(f'❌ Error: Payment mismatch (Expected {expected_amount}, Displayed {payment_amount})')
-        return False
+        msg = f'결제 금액 불일치 (예상: {expected_amount}, 표시: {payment_amount})'
+        print(f'❌ Error: {msg}')
+        return {'success': False, 'numbers': numbers, 'details': msg}
 
     # Purchase
     page.click("#btnBuy")
@@ -121,13 +174,13 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> bool:
 
     limit_popup = page.locator("#recommend720Plus")
     if limit_popup.is_visible():
-        print("❌ Error: Weekly purchase limit exceeded.")
         content = limit_popup.locator(".cont1").inner_text()
-        print(f"   Message: {content.strip()}")
-        return False
+        msg = f'주간 구매 한도 초과: {content.strip()}'
+        print(f"❌ Error: {msg}")
+        return {'success': False, 'numbers': numbers, 'details': msg}
 
     print(f'✅ Lotto 6/45: All {total_games} games purchased successfully!')
-    return True
+    return {'success': True, 'numbers': numbers, 'details': ''}
 
 
 def run(playwright: Playwright) -> None:
@@ -135,6 +188,9 @@ def run(playwright: Playwright) -> None:
     browser = playwright.chromium.launch(headless=True)
     context = browser.new_context()
     page = context.new_page()
+
+    result = {'success': False, 'numbers': [], 'balance': 0, 'details': ''}
+    should_notify = False
 
     try:
         # Step 1: Login (한 번만)
@@ -146,6 +202,7 @@ def run(playwright: Playwright) -> None:
         print("=" * 40)
         print("💰 Checking balance...")
         balance_info = get_balance(page)
+        result['balance'] = balance_info['deposit_balance']
         print(f"💰 예치금 잔액: {balance_info['deposit_balance']:,}원")
         print(f"🛒 구매가능: {balance_info['available_amount']:,}원")
 
@@ -158,15 +215,25 @@ def run(playwright: Playwright) -> None:
             return
 
         if balance_info['available_amount'] < required_amount:
-            print(f"❌ Insufficient balance. Need {required_amount:,}원, have {balance_info['available_amount']:,}원")
+            msg = f"잔액 부족 (필요: {required_amount:,}원, 보유: {balance_info['available_amount']:,}원)"
+            print(f"❌ {msg}")
+            result['details'] = msg
+            should_notify = True
             return
 
         # Step 4: Buy Lotto 645
         print("=" * 40)
         print("🎫 Buying Lotto 645...")
-        success = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
+        should_notify = True
+        purchase_result = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
+        result['success'] = purchase_result['success']
+        result['numbers'] = purchase_result['numbers']
+        result['details'] = purchase_result.get('details', '')
 
-        if success:
+        if result['success']:
+            # Re-check balance after purchase
+            post_balance = get_balance(page)
+            result['balance'] = post_balance['deposit_balance']
             print("=" * 40)
             print("✅ All tasks completed successfully!")
         else:
@@ -175,10 +242,19 @@ def run(playwright: Playwright) -> None:
 
     except Exception as e:
         print(f"❌ Error: {e}")
+        result['details'] = str(e)
+        should_notify = True
         page.screenshot(path="debug_error.png")
         print("📸 Screenshot saved: debug_error.png")
         raise
     finally:
+        if should_notify:
+            send_notification(
+                success=result['success'],
+                numbers=result['numbers'],
+                balance=result['balance'],
+                details=result['details'],
+            )
         context.close()
         browser.close()
 
