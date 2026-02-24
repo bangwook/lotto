@@ -1,169 +1,215 @@
 #!/usr/bin/env python3
-import json
-import time
+"""
+연금복권 720+ 구매 모듈
+설정된 개수만큼 랜덤 조를 선택하여 자동번호로 구매
+"""
+import random
 import re
+import time
 from os import environ
-from pathlib import Path
-from dotenv import load_dotenv
-from playwright.sync_api import Playwright, sync_playwright
+from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
 
-# .env loading is handled by login module import
+
+def buy_lotto720(page: Page, num_games: int) -> dict:
+    """
+    연금복권 720+를 구매합니다.
+
+    Args:
+        page: 로그인된 Playwright Page 객체
+        num_games: 구매할 매수 (1-5)
+
+    Returns:
+        dict: {'success': bool, 'groups': list[int], 'details': str}
+    """
+    if num_games <= 0:
+        return {'success': False, 'groups': [], 'details': '구매할 매수 없음'}
+
+    # Navigate to the wrapper page
+    page.goto(
+        "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72",
+        timeout=30000, wait_until="domcontentloaded",
+    )
+
+    # Wait for iframe
+    try:
+        page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
+    except Exception:
+        pass
+
+    frame = page.frame_locator("#ifrm_tab")
+
+    # Wait for iframe content
+    try:
+        frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
+    except Exception:
+        page.reload()
+        page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
+        frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
+
+    print('✅ Navigated to Lotto 720 Game Frame')
+
+    time.sleep(1)
+
+    # Verify session
+    user_id_val = frame.locator("input[name='USER_ID']").get_attribute("value")
+    if not user_id_val:
+        return {'success': False, 'groups': [], 'details': '세션 만료 (USER_ID 없음)'}
+
+    # Check balance
+    balance_val = frame.locator("#curdeposit").get_attribute("value")
+    if not balance_val:
+        balance_text = frame.locator(".lpdeposit").first.inner_text()
+        balance_val = balance_text.replace(",", "").replace("원", "").strip()
+
+    try:
+        current_balance = int(balance_val)
+    except ValueError:
+        current_balance = 0
+
+    required = num_games * 1000
+    if current_balance < required:
+        return {
+            'success': False, 'groups': [],
+            'details': f'잔액 부족 (필요: {required:,}원, 보유: {current_balance:,}원)',
+        }
+
+    # Dismiss popup if present
+    try:
+        if frame.locator("#popupLayerAlert").is_visible(timeout=2000):
+            frame.locator("#popupLayerAlert").get_by_role("button", name="확인").click()
+    except Exception:
+        pass
+
+    # Wait for game UI
+    frame.locator(".lotto720_btn_auto_number").wait_for(state="visible", timeout=15000)
+
+    # Remove pause layer popups
+    page.evaluate("""
+        () => {
+            const iframe = document.querySelector('#ifrm_tab');
+            if (iframe && iframe.contentDocument) {
+                const doc = iframe.contentDocument;
+                [
+                    '#pause_layer_pop_02', '#ele_pause_layer_pop02',
+                    '.pause_layer_pop', '.pause_bg'
+                ].forEach(sel => {
+                    doc.querySelectorAll(sel).forEach(el => {
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        el.style.pointerEvents = 'none';
+                    });
+                });
+            }
+        }
+    """)
+
+    # Select games with random groups
+    groups = []
+    for i in range(num_games):
+        group = random.randint(1, 5)
+        groups.append(group)
+
+        # Select the specific group in the iframe
+        selected = page.evaluate(f"""
+            () => {{
+                const iframe = document.querySelector('#ifrm_tab');
+                if (!iframe || !iframe.contentDocument) return false;
+                const doc = iframe.contentDocument;
+
+                // Strategy 1: Click element with exact text "N조"
+                const allElements = doc.querySelectorAll('a, label, span, button, li, div');
+                for (const el of allElements) {{
+                    const text = el.textContent.trim();
+                    if (text === '{group}조') {{
+                        el.click();
+                        return true;
+                    }}
+                }}
+
+                // Strategy 2: Radio/input with value
+                const inputs = doc.querySelectorAll('input[type="radio"], input[type="button"]');
+                for (const input of inputs) {{
+                    if (input.value === '{group}') {{
+                        input.click();
+                        return true;
+                    }}
+                }}
+
+                // Strategy 3: data attribute
+                const dataEls = doc.querySelectorAll('[data-val="{group}"], [data-value="{group}"]');
+                if (dataEls.length > 0) {{
+                    dataEls[0].click();
+                    return true;
+                }}
+
+                return false;
+            }}
+        """)
+
+        if selected:
+            print(f'✅ {group}조 선택됨')
+        else:
+            print(f'⚠️ {group}조 선택 실패, 기본값 사용')
+
+        time.sleep(0.5)
+
+        # Click auto number
+        frame.locator(".lotto720_btn_auto_number").click(force=True)
+        time.sleep(1)
+        print(f'✅ 자동번호 {i + 1}/{num_games} 생성')
+
+    # Confirm selection
+    frame.locator(".lotto720_btn_confirm_number").click()
+    time.sleep(2)
+
+    # Verify payment amount
+    payment_el = frame.locator(".lotto720_price.lpcurpay")
+    payment_text = payment_el.inner_text().strip()
+    payment_val = int(re.sub(r'[^0-9]', '', payment_text) or '0')
+    expected = num_games * 1000
+
+    if payment_val != expected:
+        msg = f'결제 금액 불일치 (예상: {expected:,}, 표시: {payment_val:,})'
+        print(f'❌ {msg}')
+        return {'success': False, 'groups': groups, 'details': msg}
+
+    # Purchase
+    frame.locator("a:has-text('구매하기')").first.click()
+
+    # Confirm popup
+    confirm_popup = frame.locator("#lotto720_popup_confirm")
+    confirm_popup.wait_for(state="visible", timeout=5000)
+    confirm_popup.locator("a.btn_blue").click()
+
+    time.sleep(2)
+    print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
+    return {'success': True, 'groups': groups, 'details': ''}
 
 
 def run(playwright: Playwright) -> None:
-    """
-    연금복권 720+를 구매합니다.
-    '모든 조'를 선택하여 임의의 번호로 5매(5,000원)를 구매합니다.
-    
-    Args:
-        playwright: Playwright 객체
-    """
-    # Create browser, context, and page
+    """독립 실행용"""
     browser = playwright.chromium.launch(headless=True)
     context = browser.new_context()
     page = context.new_page()
-    
-    # Perform login using injected page
-    login(page)
 
     try:
-        # Navigate to the Wrapper Page (TotalGame.jsp) which handles session sync correctly
-        print("🚀 Navigating to Lotto 720 Wrapper page...")
-        page.goto("https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72", timeout=30000, wait_until="domcontentloaded")
-        
-        # Access the game iframe
-        # The actual game UI is loaded inside this iframe
-        print("Waiting for game iframe to load...")
-        # Wait for the iframe element to be visible on the main page
-        try:
-            page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
-        except Exception:
-            print("⚠️ Iframe #ifrm_tab not visible. Page source might be different.")
-        
-        frame = page.frame_locator("#ifrm_tab")
-        
-        # Wait for an element inside the frame explicitly to ensure it's ready
-        try:
-             # Wait for either the hidden balance input OR the visible balance text
-             # This makes it robust if one is missing or slow
-             frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
-        except Exception:
-             print("⚠️ Timeout waiting for iframe content. Retrying navigation...")
-             page.reload()
-             page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
-             frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
-
-        print('✅ Navigated to Lotto 720 Game Frame')
-        
-        # ----------------------------------------------------
-        # Verify Session & Balance (Inside Frame)
-        # ----------------------------------------------------
-        time.sleep(1)
-
-        # 1. Check Login Session (via hidden input in frame)
-        user_id_val = frame.locator("input[name='USER_ID']").get_attribute("value")
-        if not user_id_val:
-            raise Exception("❌ Session lost: Not logged in on Game Frame (USER_ID empty).")
-        
-        print(f"🔑 Login ID on Game Page: {user_id_val}")
-
-        # 2. Check Balance (via hidden input #curdeposit in frame)
-        balance_val = frame.locator("#curdeposit").get_attribute("value")
-        
-        # Fallback to UI element if hidden input isn't populated
-        if not balance_val:
-            balance_text = frame.locator(".lpdeposit").first.inner_text() 
-            balance_val = balance_text.replace(",", "").replace("원", "").strip()
-            
-        try:
-            current_balance = int(balance_val)
-        except ValueError:
-            current_balance = 0
-            print(f"⚠️ Could not parse balance value: '{balance_val}', assuming 0.")
-
-        print(f"💰 Current Balance on Game Page: {current_balance:,} KRW")
-
-        if current_balance == 0:
-            raise Exception("❌ Deposit is 0 KRW. Cannot proceed with purchase. Please charge your account.")
-
-        # Dismiss popup if present (inside frame)
-        if frame.locator("#popupLayerAlert").is_visible():
-            frame.locator("#popupLayerAlert").get_by_role("button", name="확인").click()
-
-        # Wait for the game UI to load
-        frame.locator(".lotto720_btn_auto_number").wait_for(state="visible", timeout=15000)
-
-        # Remove all intercepting pause layer popups using JavaScript (in iframe context)
-        # These elements block clicks even when they're not supposed to be visible
-        page.evaluate("""
-            () => {
-                const iframe = document.querySelector('#ifrm_tab');
-                if (iframe && iframe.contentDocument) {
-                    const doc = iframe.contentDocument;
-                    // Hide all known pause layer elements
-                    const selectors = [
-                        '#pause_layer_pop_02',
-                        '#ele_pause_layer_pop02',
-                        '.pause_layer_pop',
-                        '.pause_bg'
-                    ];
-                    
-                    selectors.forEach(selector => {
-                        const elements = doc.querySelectorAll(selector);
-                        elements.forEach(el => {
-                            el.style.display = 'none';
-                            el.style.visibility = 'hidden';
-                            el.style.pointerEvents = 'none';
-                        });
-                    });
-                }
-            }
-        """)
-
-        # [자동번호] 클릭 - use force to bypass any remaining intercepting elements
-        frame.locator(".lotto720_btn_auto_number").click(force=True)
-        
-        time.sleep(2)
-
-        # [선택완료] 클릭
-        frame.locator(".lotto720_btn_confirm_number").click()
-        
-        time.sleep(2)
-
-        # Verify Amount
-        payment_amount_el = frame.locator(".lotto720_price.lpcurpay")
-        time.sleep(1)
-        
-        payment_amount_text = payment_amount_el.inner_text().strip()
-        payment_val = int(re.sub(r'[^0-9]', '', payment_amount_text) or '0')
-
-        if payment_val != 5000:
-            print(f"❌ Error: Payment mismatch (Expected 5000, Displayed {payment_val})")
+        login(page)
+        num_games = int(environ.get('LOTTO720_GAMES', '0'))
+        if num_games <= 0:
+            print("LOTTO720_GAMES not set")
             return
-
-        # [구매하기] 클릭
-        frame.locator("a:has-text('구매하기')").first.click()
-        
-        # Handle Confirmation Popup
-        confirm_popup = frame.locator("#lotto720_popup_confirm")
-        confirm_popup.wait_for(state="visible", timeout=5000)
-        
-        # Click Final Purchase Button
-        confirm_popup.locator("a.btn_blue").click()
-        
-        time.sleep(2)
-        print("✅ Lotto 720: All sets purchased successfully!")
-        
-
+        result = buy_lotto720(page, num_games)
+        print(f"Result: {result}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"Error: {e}")
+        page.screenshot(path="debug_error.png")
+        raise
     finally:
-        # Cleanup
         context.close()
         browser.close()
+
 
 if __name__ == "__main__":
     with sync_playwright() as playwright:
         run(playwright)
-

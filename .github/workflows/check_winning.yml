@@ -1,15 +1,15 @@
-name: Lotto Purchase (Run on GitHub)
+name: Check Winning Results
 
 on:
   workflow_dispatch:
   schedule:
-     # 매주 금요일 저녁 10시 KST (UTC 13:00)
-     - cron: '0 13 * * 5'
+     # 매주 토요일 밤 9:30 KST (UTC 12:30)
+     - cron: '30 12 * * 6'
 
 jobs:
-  purchase:
+  check:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -29,25 +29,14 @@ jobs:
       run: |
         echo "USER_ID=${{ secrets.USER_ID }}" >> .env
         echo "PASSWD=${{ secrets.PASSWD }}" >> .env
-        echo "CHARGE_PIN=${{ secrets.CHARGE_PIN }}" >> .env
-        echo "AUTO_GAMES=${{ secrets.AUTO_GAMES || '0' }}" >> .env
-        echo "MANUAL_NUMBERS=${{ secrets.MANUAL_NUMBERS || '[]' }}" >> .env
-        echo "LOTTO720_GAMES=${{ secrets.LOTTO720_GAMES || '0' }}" >> .env
         echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
         echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
-        # Check file capability without exposing content
         ls -la .env
 
-    - name: Run Lotto Purchase Workflow
+    - name: Check Winning Results
       env:
         PYTHONPATH: src
-      run: |
-        # 디버그: 환경변수 확인 (값은 숨김)
-        echo "USER_ID set: ${{ secrets.USER_ID != '' }}"
-        echo "PASSWD set: ${{ secrets.PASSWD != '' }}"
-        echo "AUTO_GAMES: ${{ secrets.AUTO_GAMES || '0' }}"
-        # 통합 스크립트 실행 (한 번 로그인으로 모든 작업 수행)
-        python src/purchase_all.py
+      run: python src/check_winning.py
 
     - name: Upload debug screenshots
       if: always()
@@ -56,4 +45,3 @@ jobs:
         name: debug-screenshots
         path: "*.png"
         if-no-files-found: ignore
-  

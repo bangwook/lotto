@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 통합 구매 스크립트 - 한 번의 로그인으로 모든 작업 수행
-잔액 확인 → (필요시 충전) → 로또 구매 → Discord 알림
+잔액 확인 → 로또 6/45 구매 → 연금복권 720+ 구매 → Telegram 알림
 """
 import json
 import re
@@ -12,12 +12,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
-from notify import send_notification
+from lotto720 import buy_lotto720
+from notify import send_purchase_notification, send_error_notification
 
 # .env loading is handled by login module import
 
 AUTO_GAMES = int(environ.get('AUTO_GAMES', '0'))
 MANUAL_NUMBERS = json.loads(environ.get('MANUAL_NUMBERS', '[]'))
+LOTTO720_GAMES = int(environ.get('LOTTO720_GAMES', '0'))
 
 
 def get_balance(page: Page) -> dict:
@@ -49,7 +51,6 @@ def extract_game_numbers(page: Page) -> list:
             () => {
                 const games = [];
 
-                // Method 1: Find rows in the selected game table
                 const rows = document.querySelectorAll(
                     '#tblNum tbody tr, .tbl_display tbody tr'
                 );
@@ -62,7 +63,6 @@ def extract_game_numbers(page: Page) -> list:
                     if (nums.length === 6) games.push(nums);
                 }
 
-                // Method 2: Look for .ball_645.lrg (display area, not selection grid)
                 if (games.length === 0) {
                     let current = [];
                     document.querySelectorAll('.ball_645.lrg').forEach(el => {
@@ -88,7 +88,6 @@ def extract_game_numbers(page: Page) -> list:
 
 def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     """로또 6/45를 구매합니다. 결과를 dict로 반환합니다."""
-    # Navigate to game page
     page.goto("https://ol.dhlottery.co.kr/olotto/game/game645.do", timeout=60000, wait_until="domcontentloaded")
     print('✅ Navigated to Lotto 6/45 page')
 
@@ -148,7 +147,6 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     time.sleep(1)
     numbers = extract_game_numbers(page)
     if not numbers and manual_numbers:
-        # Fallback: use known manual numbers (auto numbers unknown)
         numbers = [list(game) for game in manual_numbers]
     print(f'🎱 추출된 번호: {numbers}')
 
@@ -189,11 +187,17 @@ def run(playwright: Playwright) -> None:
     context = browser.new_context()
     page = context.new_page()
 
-    result = {'success': False, 'numbers': [], 'balance': 0, 'details': ''}
+    result = {
+        'success': False,
+        'numbers': [],
+        'lotto720_groups': [],
+        'balance': 0,
+        'details': '',
+    }
     should_notify = False
 
     try:
-        # Step 1: Login (한 번만)
+        # Step 1: Login
         print("=" * 40)
         print("🔐 Logging in...")
         login(page)
@@ -206,39 +210,71 @@ def run(playwright: Playwright) -> None:
         print(f"💰 예치금 잔액: {balance_info['deposit_balance']:,}원")
         print(f"🛒 구매가능: {balance_info['available_amount']:,}원")
 
-        # Step 3: Check if we have enough balance
-        total_games = AUTO_GAMES + len(MANUAL_NUMBERS)
-        required_amount = total_games * 1000
+        # Step 3: Calculate total required amount
+        lotto645_games = AUTO_GAMES + len(MANUAL_NUMBERS)
+        lotto645_cost = lotto645_games * 1000
+        lotto720_cost = LOTTO720_GAMES * 1000
+        total_required = lotto645_cost + lotto720_cost
 
-        if total_games == 0:
-            print("⚠️  No games configured. Set AUTO_GAMES or MANUAL_NUMBERS in .env")
+        if lotto645_games == 0 and LOTTO720_GAMES == 0:
+            print("⚠️  No games configured.")
+            send_error_notification(
+                "로또 구매",
+                "구매할 게임이 설정되지 않았습니다 (AUTO_GAMES / MANUAL_NUMBERS / LOTTO720_GAMES)",
+            )
             return
 
-        if balance_info['available_amount'] < required_amount:
-            msg = f"잔액 부족 (필요: {required_amount:,}원, 보유: {balance_info['available_amount']:,}원)"
+        if balance_info['available_amount'] < total_required:
+            msg = f"잔액 부족 (필요: {total_required:,}원, 보유: {balance_info['available_amount']:,}원)"
             print(f"❌ {msg}")
             result['details'] = msg
             should_notify = True
             return
 
-        # Step 4: Buy Lotto 645
-        print("=" * 40)
-        print("🎫 Buying Lotto 645...")
-        should_notify = True
-        purchase_result = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
-        result['success'] = purchase_result['success']
-        result['numbers'] = purchase_result['numbers']
-        result['details'] = purchase_result.get('details', '')
+        all_success = True
 
+        # Step 4: Buy Lotto 6/45
+        if lotto645_games > 0:
+            print("=" * 40)
+            print("🎫 Buying Lotto 6/45...")
+            should_notify = True
+            purchase_result = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
+            result['success'] = purchase_result['success']
+            result['numbers'] = purchase_result['numbers']
+            if not purchase_result['success']:
+                result['details'] = purchase_result.get('details', '')
+                all_success = False
+
+        # Step 5: Buy Lotto 720+
+        if LOTTO720_GAMES > 0:
+            print("=" * 40)
+            print(f"🎫 Buying Lotto 720+ ({LOTTO720_GAMES}매)...")
+            should_notify = True
+            lotto720_result = buy_lotto720(page, LOTTO720_GAMES)
+            result['lotto720_groups'] = lotto720_result.get('groups', [])
+            if not lotto720_result['success']:
+                all_success = False
+                details_720 = lotto720_result.get('details', '')
+                if result['details']:
+                    result['details'] += f" / 720+: {details_720}"
+                else:
+                    result['details'] = f"720+: {details_720}"
+
+        # Update overall success
+        if lotto645_games > 0 and LOTTO720_GAMES > 0:
+            result['success'] = all_success
+        elif LOTTO720_GAMES > 0:
+            result['success'] = lotto720_result['success']
+
+        # Step 6: Re-check balance
         if result['success']:
-            # Re-check balance after purchase
             post_balance = get_balance(page)
             result['balance'] = post_balance['deposit_balance']
             print("=" * 40)
             print("✅ All tasks completed successfully!")
         else:
             print("=" * 40)
-            print("❌ Purchase failed!")
+            print("❌ Some purchases failed!")
 
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -249,11 +285,12 @@ def run(playwright: Playwright) -> None:
         raise
     finally:
         if should_notify:
-            send_notification(
+            send_purchase_notification(
                 success=result['success'],
                 numbers=result['numbers'],
                 balance=result['balance'],
                 details=result['details'],
+                lotto720_groups=result['lotto720_groups'],
             )
         context.close()
         browser.close()
