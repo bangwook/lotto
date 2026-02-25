@@ -278,6 +278,7 @@ def run(playwright: Playwright) -> None:
 
     except Exception as e:
         print(f"❌ Error: {e}")
+        result['success'] = False
         result['details'] = str(e)
         should_notify = True
         page.screenshot(path="debug_error.png")

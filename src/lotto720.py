@@ -28,24 +28,50 @@ def buy_lotto720(page: Page, num_games: int) -> dict:
     # Navigate to the wrapper page
     page.goto(
         "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72",
-        timeout=30000, wait_until="domcontentloaded",
+        timeout=60000, wait_until="networkidle",
     )
 
-    # Wait for iframe
-    try:
-        page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
-    except Exception:
-        pass
+    # Wait for iframe to be created and visible
+    time.sleep(3)  # JS가 iframe src를 설정할 시간 확보
+
+    # iframe이 보이지 않으면 재시도
+    for attempt in range(3):
+        try:
+            page.locator("#ifrm_tab").wait_for(state="visible", timeout=15000)
+            break
+        except Exception:
+            if attempt < 2:
+                print(f'⚠️ iframe 로딩 대기 중... (시도 {attempt + 1}/3)')
+                page.screenshot(path=f"debug_720_attempt_{attempt}.png")
+                page.reload(wait_until="networkidle", timeout=60000)
+                time.sleep(3)
+            else:
+                page.screenshot(path="debug_720_iframe_fail.png")
+                print('📸 Screenshot saved: debug_720_iframe_fail.png')
+                return {
+                    'success': False, 'groups': [],
+                    'details': 'iframe #ifrm_tab 로딩 실패 (3회 시도)',
+                }
 
     frame = page.frame_locator("#ifrm_tab")
 
     # Wait for iframe content
     try:
-        frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
+        frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=30000)
     except Exception:
-        page.reload()
-        page.locator("#ifrm_tab").wait_for(state="visible", timeout=10000)
-        frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=20000)
+        page.screenshot(path="debug_720_content_fail.png")
+        print('📸 Screenshot saved: debug_720_content_fail.png')
+        # 한 번 더 재시도
+        page.reload(wait_until="networkidle", timeout=60000)
+        time.sleep(3)
+        try:
+            page.locator("#ifrm_tab").wait_for(state="visible", timeout=15000)
+            frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=30000)
+        except Exception:
+            return {
+                'success': False, 'groups': [],
+                'details': 'iframe 내부 콘텐츠 로딩 실패',
+            }
 
     print('✅ Navigated to Lotto 720 Game Frame')
 
