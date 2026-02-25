@@ -238,38 +238,53 @@ def run(playwright: Playwright) -> None:
             print("=" * 40)
             print("🎫 Buying Lotto 6/45...")
             should_notify = True
-            purchase_result = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
-            result['success'] = purchase_result['success']
-            result['numbers'] = purchase_result['numbers']
-            if not purchase_result['success']:
-                result['details'] = purchase_result.get('details', '')
+            try:
+                purchase_result = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
+                result['numbers'] = purchase_result['numbers']
+                if not purchase_result['success']:
+                    result['details'] = purchase_result.get('details', '')
+                    all_success = False
+            except Exception as e:
+                print(f"❌ 로또 6/45 구매 중 오류: {e}")
+                page.screenshot(path="debug_lotto645_error.png")
                 all_success = False
+                result['details'] = f"6/45: {e}"
 
         # Step 5: Buy Lotto 720+
         if LOTTO720_GAMES > 0:
             print("=" * 40)
             print(f"🎫 Buying Lotto 720+ ({LOTTO720_GAMES}매)...")
             should_notify = True
-            lotto720_result = buy_lotto720(page, LOTTO720_GAMES)
-            result['lotto720_groups'] = lotto720_result.get('groups', [])
-            if not lotto720_result['success']:
+            try:
+                lotto720_result = buy_lotto720(page, LOTTO720_GAMES)
+                result['lotto720_groups'] = lotto720_result.get('groups', [])
+                if not lotto720_result['success']:
+                    all_success = False
+                    details_720 = lotto720_result.get('details', '')
+                    if result['details']:
+                        result['details'] += f" / 720+: {details_720}"
+                    else:
+                        result['details'] = f"720+: {details_720}"
+            except Exception as e:
+                print(f"❌ 연금복권 720+ 구매 중 오류: {e}")
+                page.screenshot(path="debug_lotto720_error.png")
                 all_success = False
-                details_720 = lotto720_result.get('details', '')
                 if result['details']:
-                    result['details'] += f" / 720+: {details_720}"
+                    result['details'] += f" / 720+: {e}"
                 else:
-                    result['details'] = f"720+: {details_720}"
+                    result['details'] = f"720+: {e}"
 
         # Update overall success
-        if lotto645_games > 0 and LOTTO720_GAMES > 0:
-            result['success'] = all_success
-        elif LOTTO720_GAMES > 0:
-            result['success'] = lotto720_result['success']
+        result['success'] = all_success
 
         # Step 6: Re-check balance
-        if result['success']:
+        try:
             post_balance = get_balance(page)
             result['balance'] = post_balance['deposit_balance']
+        except Exception:
+            pass
+
+        if result['success']:
             print("=" * 40)
             print("✅ All tasks completed successfully!")
         else:
