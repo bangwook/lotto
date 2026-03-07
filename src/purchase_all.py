@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
 from lotto720 import buy_lotto720
-from notify import send_purchase_notification, send_error_notification
+from notify import send_purchase_notification, send_error_notification, send_lotto645_notification, send_lotto720_notification
 
 # .env loading is handled by login module import
 
@@ -187,14 +187,7 @@ def run(playwright: Playwright) -> None:
     context = browser.new_context()
     page = context.new_page()
 
-    result = {
-        'success': False,
-        'numbers': [],
-        'lotto720_groups': [],
-        'balance': 0,
-        'details': '',
-    }
-    should_notify = False
+    current_balance = 0
 
     try:
         # Step 1: Login
@@ -206,7 +199,7 @@ def run(playwright: Playwright) -> None:
         print("=" * 40)
         print("💰 Checking balance...")
         balance_info = get_balance(page)
-        result['balance'] = balance_info['deposit_balance']
+        current_balance = balance_info['deposit_balance']
         print(f"💰 예치금 잔액: {balance_info['deposit_balance']:,}원")
         print(f"🛒 구매가능: {balance_info['available_amount']:,}원")
 
@@ -227,87 +220,83 @@ def run(playwright: Playwright) -> None:
         if balance_info['available_amount'] < total_required:
             msg = f"잔액 부족 (필요: {total_required:,}원, 보유: {balance_info['available_amount']:,}원)"
             print(f"❌ {msg}")
-            result['details'] = msg
-            should_notify = True
+            send_error_notification("로또 구매", msg)
             return
 
-        all_success = True
-
-        # Step 4: Buy Lotto 6/45
+        # Step 4: Buy Lotto 6/45 (with separate notification)
         if lotto645_games > 0:
             print("=" * 40)
             print("🎫 Buying Lotto 6/45...")
-            should_notify = True
+            lotto645_success = False
+            lotto645_numbers = []
+            lotto645_details = ''
             try:
                 purchase_result = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
-                result['numbers'] = purchase_result['numbers']
-                if not purchase_result['success']:
-                    result['details'] = purchase_result.get('details', '')
-                    all_success = False
+                lotto645_numbers = purchase_result['numbers']
+                lotto645_success = purchase_result['success']
+                lotto645_details = purchase_result.get('details', '')
             except Exception as e:
                 print(f"❌ 로또 6/45 구매 중 오류: {e}")
                 page.screenshot(path="debug_lotto645_error.png")
-                all_success = False
-                result['details'] = f"6/45: {e}"
+                lotto645_details = str(e)
 
-        # Step 5: Buy Lotto 720+
+            # Re-check balance after 6/45 purchase
+            try:
+                post_645_balance = get_balance(page)
+                current_balance = post_645_balance['deposit_balance']
+            except Exception:
+                pass
+
+            # Send Lotto 6/45 notification immediately
+            send_lotto645_notification(
+                success=lotto645_success,
+                numbers=lotto645_numbers,
+                balance=current_balance,
+                details=lotto645_details,
+            )
+
+        # Step 5: Buy Lotto 720+ (with separate notification)
         if LOTTO720_GAMES > 0:
             print("=" * 40)
             print(f"🎫 Buying Lotto 720+ ({LOTTO720_GAMES}매)...")
-            should_notify = True
+            lotto720_success = False
+            lotto720_groups = []
+            lotto720_details = ''
             try:
                 lotto720_result = buy_lotto720(page, LOTTO720_GAMES)
-                result['lotto720_groups'] = lotto720_result.get('groups', [])
-                if not lotto720_result['success']:
-                    all_success = False
-                    details_720 = lotto720_result.get('details', '')
-                    if result['details']:
-                        result['details'] += f" / 720+: {details_720}"
-                    else:
-                        result['details'] = f"720+: {details_720}"
+                lotto720_groups = lotto720_result.get('groups', [])
+                lotto720_success = lotto720_result['success']
+                lotto720_details = lotto720_result.get('details', '')
             except Exception as e:
                 print(f"❌ 연금복권 720+ 구매 중 오류: {e}")
                 page.screenshot(path="debug_lotto720_error.png")
-                all_success = False
-                if result['details']:
-                    result['details'] += f" / 720+: {e}"
-                else:
-                    result['details'] = f"720+: {e}"
+                lotto720_details = str(e)
 
-        # Update overall success
-        result['success'] = all_success
+            # Re-check balance after 720+ purchase
+            try:
+                post_720_balance = get_balance(page)
+                current_balance = post_720_balance['deposit_balance']
+            except Exception:
+                pass
 
-        # Step 6: Re-check balance
-        try:
-            post_balance = get_balance(page)
-            result['balance'] = post_balance['deposit_balance']
-        except Exception:
-            pass
+            # Send Lotto 720+ notification immediately
+            send_lotto720_notification(
+                success=lotto720_success,
+                groups=lotto720_groups,
+                balance=current_balance,
+                details=lotto720_details,
+            )
 
-        if result['success']:
-            print("=" * 40)
-            print("✅ All tasks completed successfully!")
-        else:
-            print("=" * 40)
-            print("❌ Some purchases failed!")
+        print("=" * 40)
+        print("✅ All tasks completed!")
 
     except Exception as e:
         print(f"❌ Error: {e}")
-        result['success'] = False
-        result['details'] = str(e)
-        should_notify = True
         page.screenshot(path="debug_error.png")
         print("📸 Screenshot saved: debug_error.png")
+        send_error_notification("로또 구매", str(e))
         raise
     finally:
-        if should_notify:
-            send_purchase_notification(
-                success=result['success'],
-                numbers=result['numbers'],
-                balance=result['balance'],
-                details=result['details'],
-                lotto720_groups=result['lotto720_groups'],
-            )
         context.close()
         browser.close()
 

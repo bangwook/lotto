@@ -74,6 +74,57 @@ def send_purchase_notification(success: bool, numbers: list, balance: int,
     _send_telegram('\n'.join(lines))
 
 
+def send_lotto645_notification(success: bool, numbers: list, balance: int, details: str = ''):
+    """로또 6/45 구매 결과를 Telegram으로 전송합니다."""
+    icon = "✅" if success else "❌"
+    status = "성공" if success else "실패"
+    title = f"{icon} 로또 6/45 구매 {status}!"
+
+    lines = [f"<b>{title}</b>", ""]
+
+    if numbers:
+        lines.append("🎱 <b>선택 번호</b>")
+        for i, game in enumerate(numbers, 1):
+            nums_str = '  '.join(str(n).zfill(2) for n in game)
+            lines.append(f"  <b>{chr(64 + i)}</b>  <code>{nums_str}</code>")
+        lines.append("")
+
+    lines.extend([
+        f"💰 <b>잔액:</b> {balance:,}원",
+        f"📅 <b>일시:</b> {_kst_now()}",
+    ])
+
+    if details:
+        lines.append(f"📝 <b>상세:</b> {details}")
+
+    _send_telegram('\n'.join(lines))
+
+
+def send_lotto720_notification(success: bool, groups: list, balance: int, details: str = ''):
+    """연금복권 720+ 구매 결과를 Telegram으로 전송합니다."""
+    icon = "✅" if success else "❌"
+    status = "성공" if success else "실패"
+    title = f"{icon} 연금복권 720+ 구매 {status}!"
+
+    lines = [f"<b>{title}</b>", ""]
+
+    if groups:
+        lines.append("🎫 <b>선택 조</b>")
+        for i, group in enumerate(groups, 1):
+            lines.append(f"  <b>{chr(64 + i)}</b>  {group}조 (자동)")
+        lines.append("")
+
+    lines.extend([
+        f"💰 <b>잔액:</b> {balance:,}원",
+        f"📅 <b>일시:</b> {_kst_now()}",
+    ])
+
+    if details:
+        lines.append(f"📝 <b>상세:</b> {details}")
+
+    _send_telegram('\n'.join(lines))
+
+
 def send_error_notification(script: str, error: str):
     """스크립트 오류를 Telegram으로 전송합니다."""
     lines = [
