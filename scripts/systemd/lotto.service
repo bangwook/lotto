@@ -1,4 +1,6 @@
 [Unit]
+# 로또 자동 구매 서비스
+# 로또 6/45 및 연금복권 720+ 통합 구매 스크립트 실행
 Description=Lotto Auto Purchase Service
 After=network-online.target
 Wants=network-online.target
@@ -8,13 +10,13 @@ Type=oneshot
 WorkingDirectory={{PROJECT_ROOT}}
 Environment="PATH={{PROJECT_ROOT}}/.venv/bin:/usr/local/bin:/usr/bin:/bin"
 
-# Run main workflow script
-ExecStart={{PROJECT_ROOT}}/scripts/purchase.sh
+# 통합 구매 스크립트 실행 (purchase_all.py)
+ExecStart={{PROJECT_ROOT}}/.venv/bin/python {{PROJECT_ROOT}}/src/purchase_all.py
 
-# Logging
+# 로깅 설정
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=lotto-auto
+SyslogIdentifier=lotto-purchase
 
 [Install]
 WantedBy=default.target

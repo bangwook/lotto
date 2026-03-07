@@ -1,0 +1,22 @@
+[Unit]
+# 로또 당첨 확인 서비스
+# 최근 구매 내역의 당첨 결과를 확인하고 Telegram 알림 전송
+Description=Lotto Winning Check Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{PROJECT_ROOT}}
+Environment="PATH={{PROJECT_ROOT}}/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# 당첨 확인 스크립트 실행 (check_winning.py)
+ExecStart={{PROJECT_ROOT}}/.venv/bin/python {{PROJECT_ROOT}}/src/check_winning.py
+
+# 로깅 설정
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lotto-check
+
+[Install]
+WantedBy=default.target

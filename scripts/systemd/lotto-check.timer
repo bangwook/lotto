@@ -1,0 +1,13 @@
+[Unit]
+# 로또 당첨 확인 타이머
+# 매주 토요일 저녁 10시 (22:00 KST)에 당첨 결과 확인 실행
+Description=Lotto Winning Check Timer - Every Saturday 10:00 PM KST
+Requires=lotto-check.service
+
+[Timer]
+# 매주 토요일 22:00 KST
+OnCalendar=Sat *-*-* 22:00:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,10 +1,12 @@
 [Unit]
-Description=Lotto Auto Purchase Timer - Every Sunday 09:00 AM KST
+# 로또 자동 구매 타이머
+# 매주 금요일 저녁 10시 (22:00 KST)에 로또 구매 실행
+Description=Lotto Auto Purchase Timer - Every Friday 10:00 PM KST
 Requires=lotto.service
 
 [Timer]
-# Every Sunday at 09:00 AM KST
-OnCalendar=Sun *-*-* 09:00:00 Asia/Seoul
+# 매주 금요일 22:00 KST
+OnCalendar=Fri *-*-* 22:00:00 Asia/Seoul
 Persistent=true
 
 [Install]
