@@ -230,6 +230,7 @@ def run(playwright: Playwright) -> None:
             lotto645_success = False
             lotto645_numbers = []
             lotto645_details = ''
+
             try:
                 purchase_result = buy_lotto645(page, AUTO_GAMES, MANUAL_NUMBERS)
                 lotto645_numbers = purchase_result['numbers']
@@ -237,23 +238,30 @@ def run(playwright: Playwright) -> None:
                 lotto645_details = purchase_result.get('details', '')
             except Exception as e:
                 print(f"❌ 로또 6/45 구매 중 오류: {e}")
-                page.screenshot(path="debug_lotto645_error.png")
                 lotto645_details = str(e)
+                # 스크린샷 저장 시도 (실패해도 무시)
+                try:
+                    page.screenshot(path="debug_lotto645_error.png")
+                except Exception:
+                    print("⚠️ 스크린샷 저장 실패")
 
-            # Re-check balance after 6/45 purchase
+            # Re-check balance after 6/45 purchase (실패해도 무시)
             try:
                 post_645_balance = get_balance(page)
                 current_balance = post_645_balance['deposit_balance']
             except Exception:
-                pass
+                print("⚠️ 잔액 조회 실패, 이전 잔액 사용")
 
-            # Send Lotto 6/45 notification immediately
-            send_lotto645_notification(
-                success=lotto645_success,
-                numbers=lotto645_numbers,
-                balance=current_balance,
-                details=lotto645_details,
-            )
+            # 6/45 알림 전송 (반드시 실행)
+            try:
+                send_lotto645_notification(
+                    success=lotto645_success,
+                    numbers=lotto645_numbers,
+                    balance=current_balance,
+                    details=lotto645_details,
+                )
+            except Exception as e:
+                print(f"❌ 6/45 알림 전송 실패: {e}")
 
         # Step 5: Buy Lotto 720+ (with separate notification)
         if LOTTO720_GAMES > 0:
@@ -262,6 +270,7 @@ def run(playwright: Playwright) -> None:
             lotto720_success = False
             lotto720_groups = []
             lotto720_details = ''
+
             try:
                 lotto720_result = buy_lotto720(page, LOTTO720_GAMES)
                 lotto720_groups = lotto720_result.get('groups', [])
@@ -269,32 +278,47 @@ def run(playwright: Playwright) -> None:
                 lotto720_details = lotto720_result.get('details', '')
             except Exception as e:
                 print(f"❌ 연금복권 720+ 구매 중 오류: {e}")
-                page.screenshot(path="debug_lotto720_error.png")
                 lotto720_details = str(e)
+                # 스크린샷 저장 시도 (실패해도 무시)
+                try:
+                    page.screenshot(path="debug_lotto720_error.png")
+                except Exception:
+                    print("⚠️ 스크린샷 저장 실패")
 
-            # Re-check balance after 720+ purchase
+            # Re-check balance after 720+ purchase (실패해도 무시)
             try:
                 post_720_balance = get_balance(page)
                 current_balance = post_720_balance['deposit_balance']
             except Exception:
-                pass
+                print("⚠️ 잔액 조회 실패, 이전 잔액 사용")
 
-            # Send Lotto 720+ notification immediately
-            send_lotto720_notification(
-                success=lotto720_success,
-                groups=lotto720_groups,
-                balance=current_balance,
-                details=lotto720_details,
-            )
+            # 720+ 알림 전송 (반드시 실행)
+            try:
+                send_lotto720_notification(
+                    success=lotto720_success,
+                    groups=lotto720_groups,
+                    balance=current_balance,
+                    details=lotto720_details,
+                )
+            except Exception as e:
+                print(f"❌ 720+ 알림 전송 실패: {e}")
 
         print("=" * 40)
         print("✅ All tasks completed!")
 
     except Exception as e:
         print(f"❌ Error: {e}")
-        page.screenshot(path="debug_error.png")
-        print("📸 Screenshot saved: debug_error.png")
-        send_error_notification("로또 구매", str(e))
+        # 스크린샷 저장 시도 (실패해도 무시)
+        try:
+            page.screenshot(path="debug_error.png")
+            print("📸 Screenshot saved: debug_error.png")
+        except Exception:
+            print("⚠️ 스크린샷 저장 실패")
+        # 에러 알림 전송 (실패해도 무시)
+        try:
+            send_error_notification("로또 구매", str(e))
+        except Exception as notify_err:
+            print(f"❌ 에러 알림 전송 실패: {notify_err}")
         raise
     finally:
         context.close()
