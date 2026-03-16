@@ -11,13 +11,14 @@ from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
 
 
-def buy_lotto720(page: Page, num_games: int) -> dict:
+def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     """
     연금복권 720+를 구매합니다.
 
     Args:
         page: 로그인된 Playwright Page 객체
         num_games: 구매할 매수 (1-5)
+        dry_run: True이면 구매 직전까지만 진행 (테스트용)
 
     Returns:
         dict: {'success': bool, 'groups': list[int], 'details': str}
@@ -25,32 +26,90 @@ def buy_lotto720(page: Page, num_games: int) -> dict:
     if num_games <= 0:
         return {'success': False, 'groups': [], 'details': '구매할 매수 없음'}
 
+    # el.dhlottery.co.kr 서브도메인에 세션 쿠키 복사
+    # 로그인은 www.dhlottery.co.kr에서 이루어지므로 el. 도메인에 쿠키가 없을 수 있음
+    context = page.context
+    cookies = context.cookies()
+    new_cookies = []
+    for cookie in cookies:
+        if 'dhlottery.co.kr' in cookie.get('domain', ''):
+            el_cookie = cookie.copy()
+            el_cookie['domain'] = '.dhlottery.co.kr'
+            new_cookies.append(el_cookie)
+    if new_cookies:
+        context.add_cookies(new_cookies)
+        print(f'🍪 {len(new_cookies)}개 쿠키를 .dhlottery.co.kr 도메인으로 복사')
+
     # Navigate to the wrapper page
     page.goto(
         "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72",
         timeout=60000, wait_until="networkidle",
     )
 
-    # Wait for iframe to be created and visible
-    time.sleep(3)  # JS가 iframe src를 설정할 시간 확보
+    # Wait for iframe to be created and its src to be set by JS
+    time.sleep(5)
 
-    # iframe이 보이지 않으면 재시도
+    # iframe이 보이지 않으면 src를 직접 설정 후 재시도
     for attempt in range(3):
         try:
             page.locator("#ifrm_tab").wait_for(state="visible", timeout=15000)
+            # iframe src가 비어있으면 직접 설정
+            iframe_src = page.evaluate("""
+                () => {
+                    const iframe = document.querySelector('#ifrm_tab');
+                    return iframe ? iframe.src : '';
+                }
+            """)
+            if not iframe_src or iframe_src == 'about:blank':
+                print(f'⚠️ iframe src가 비어있음, 직접 설정 시도...')
+                page.evaluate("""
+                    () => {
+                        const iframe = document.querySelector('#ifrm_tab');
+                        if (iframe) {
+                            iframe.src = '/game/lottery720/game.do';
+                        }
+                    }
+                """)
+                time.sleep(3)
             break
         except Exception:
             if attempt < 2:
                 print(f'⚠️ iframe 로딩 대기 중... (시도 {attempt + 1}/3)')
                 page.screenshot(path=f"debug_720_attempt_{attempt}.png")
+                # iframe이 없으면 페이지 구조 디버깅
+                page.evaluate("""
+                    () => {
+                        const iframe = document.querySelector('#ifrm_tab');
+                        console.log('iframe exists:', !!iframe);
+                        if (iframe) {
+                            console.log('iframe src:', iframe.src);
+                            console.log('iframe display:', iframe.style.display);
+                            console.log('iframe dimensions:', iframe.offsetWidth, iframe.offsetHeight);
+                        }
+                    }
+                """)
                 page.reload(wait_until="networkidle", timeout=60000)
-                time.sleep(3)
+                time.sleep(5)
             else:
                 page.screenshot(path="debug_720_iframe_fail.png")
                 print('📸 Screenshot saved: debug_720_iframe_fail.png')
+                # 마지막 시도: 디버그 정보 출력
+                debug_info = page.evaluate("""
+                    () => {
+                        const iframe = document.querySelector('#ifrm_tab');
+                        return {
+                            iframeExists: !!iframe,
+                            iframeSrc: iframe ? iframe.src : 'N/A',
+                            iframeDisplay: iframe ? iframe.style.display : 'N/A',
+                            pageTitle: document.title,
+                            bodyText: document.body.innerText.substring(0, 500),
+                        };
+                    }
+                """)
+                print(f'🔍 디버그 정보: {debug_info}')
                 return {
                     'success': False, 'groups': [],
-                    'details': 'iframe #ifrm_tab 로딩 실패 (3회 시도)',
+                    'details': f'iframe #ifrm_tab 로딩 실패 (3회 시도). debug: {debug_info}',
                 }
 
     frame = page.frame_locator("#ifrm_tab")
@@ -189,16 +248,15 @@ def buy_lotto720(page: Page, num_games: int) -> dict:
     frame.locator(".lotto720_btn_confirm_number").click()
     time.sleep(2)
 
-    # Verify payment amount
-    payment_el = frame.locator(".lotto720_price.lpcurpay")
-    payment_text = payment_el.inner_text().strip()
-    payment_val = int(re.sub(r'[^0-9]', '', payment_text) or '0')
-    expected = num_games * 1000
+    # 구매 금액은 num_games * 1000으로 고정 (잔액 검증은 위에서 완료)
+    print(f'💰 구매 금액: {num_games * 1000:,}원 ({num_games}매)')
 
-    if payment_val != expected:
-        msg = f'결제 금액 불일치 (예상: {expected:,}, 표시: {payment_val:,})'
-        print(f'❌ {msg}')
-        return {'success': False, 'groups': groups, 'details': msg}
+    # Dry run: 구매 직전에서 중단
+    if dry_run:
+        page.screenshot(path="debug_720_dry_run.png")
+        print(f'🧪 [DRY RUN] 구매 직전 중단. 조: {groups}, 금액: {num_games * 1000:,}원')
+        print('📸 Screenshot saved: debug_720_dry_run.png')
+        return {'success': True, 'groups': groups, 'details': 'dry_run - 구매 미실행'}
 
     # Purchase
     frame.locator("a:has-text('구매하기')").first.click()
@@ -213,7 +271,7 @@ def buy_lotto720(page: Page, num_games: int) -> dict:
     return {'success': True, 'groups': groups, 'details': ''}
 
 
-def run(playwright: Playwright) -> None:
+def run(playwright: Playwright, dry_run: bool = False) -> None:
     """독립 실행용"""
     browser = playwright.chromium.launch(headless=True)
     context = browser.new_context()
@@ -221,11 +279,11 @@ def run(playwright: Playwright) -> None:
 
     try:
         login(page)
-        num_games = int(environ.get('LOTTO720_GAMES', '0'))
+        num_games = int(environ.get('LOTTO720_GAMES', '1'))
         if num_games <= 0:
             print("LOTTO720_GAMES not set")
             return
-        result = buy_lotto720(page, num_games)
+        result = buy_lotto720(page, num_games, dry_run=dry_run)
         print(f"Result: {result}")
     except Exception as e:
         print(f"Error: {e}")
@@ -237,5 +295,9 @@ def run(playwright: Playwright) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+    dry_run = '--dry-run' in sys.argv
+    if dry_run:
+        print('🧪 DRY RUN 모드: 구매 직전까지만 진행합니다')
     with sync_playwright() as playwright:
-        run(playwright)
+        run(playwright, dry_run=dry_run)

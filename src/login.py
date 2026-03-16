@@ -70,13 +70,25 @@ def login(page: Page) -> None:
     # Wait for login to complete
     page.wait_for_load_state("networkidle")
 
+    # securityLoginCheck.do 등 중간 리다이렉트 페이지 대기
+    if "securityLoginCheck" in page.url or "loginCheck" in page.url:
+        print(f"📍 Security check page: {page.url}, waiting for redirect...")
+        try:
+            page.wait_for_url(lambda url: "login" not in url.lower() or "Check" in url, timeout=10000)
+            page.wait_for_load_state("networkidle")
+        except Exception:
+            pass  # 타임아웃이면 현재 URL로 진행
+
     # Debug: 로그인 후 스크린샷
     page.screenshot(path="debug_after_login.png")
     print(f"📍 After login URL: {page.url}")
     print("📸 Screenshot saved: debug_after_login.png")
 
-    # 로그인 성공 여부 확인 - 로그인 페이지에 여전히 있는지 체크
-    if "login" in page.url.lower():
+    # 로그인 성공 여부 확인 - 로그인 입력 페이지에 여전히 있는지 체크
+    # securityLoginCheck.do는 로그인 성공 후 중간 페이지이므로 제외
+    current_url = page.url.lower()
+    is_login_page = "login" in current_url and "check" not in current_url
+    if is_login_page:
         # 에러 메시지 확인
         error_el = page.locator(".err_msg, .error, #loginFailMsg")
         if error_el.count() > 0:
