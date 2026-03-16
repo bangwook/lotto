@@ -51,6 +51,7 @@ def extract_game_numbers(page: Page) -> list:
             () => {
                 const games = [];
 
+                // 방법 1: 선택 테이블에서 추출
                 const rows = document.querySelectorAll(
                     '#tblNum tbody tr, .tbl_display tbody tr'
                 );
@@ -63,9 +64,10 @@ def extract_game_numbers(page: Page) -> list:
                     if (nums.length === 6) games.push(nums);
                 }
 
+                // 방법 2: ball_645 클래스로 추출
                 if (games.length === 0) {
                     let current = [];
-                    document.querySelectorAll('.ball_645.lrg').forEach(el => {
+                    document.querySelectorAll('.ball_645.lrg, .ball_645').forEach(el => {
                         const n = parseInt(el.textContent.trim());
                         if (!isNaN(n) && n >= 1 && n <= 45) {
                             current.push(n);
@@ -75,6 +77,21 @@ def extract_game_numbers(page: Page) -> list:
                             }
                         }
                     });
+                }
+
+                // 방법 3: 구매 결과 영역에서 추출
+                if (games.length === 0) {
+                    const resultRows = document.querySelectorAll(
+                        '#reportRow tr, .tbl_data tbody tr, #popReceipt tr'
+                    );
+                    for (const row of resultRows) {
+                        const nums = [];
+                        row.querySelectorAll('span[class*="ball"], span[class*="num"]').forEach(el => {
+                            const n = parseInt(el.textContent.trim());
+                            if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
+                        });
+                        if (nums.length === 6) games.push(nums);
+                    }
                 }
 
                 return games;
@@ -144,7 +161,7 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         return {'success': False, 'numbers': [], 'details': '구매할 게임 없음'}
 
     # Extract selected numbers before purchase
-    time.sleep(1)
+    time.sleep(2)
     numbers = extract_game_numbers(page)
     if not numbers and manual_numbers:
         numbers = [list(game) for game in manual_numbers]
@@ -176,6 +193,13 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         msg = f'주간 구매 한도 초과: {content.strip()}'
         print(f"❌ Error: {msg}")
         return {'success': False, 'numbers': numbers, 'details': msg}
+
+    # 구매 완료 후 번호가 없으면 결과 영역에서 재추출
+    if not numbers:
+        print('🔄 구매 완료 후 번호 재추출 시도...')
+        time.sleep(1)
+        numbers = extract_game_numbers(page)
+        print(f'🎱 재추출된 번호: {numbers}')
 
     print(f'✅ Lotto 6/45: All {total_games} games purchased successfully!')
     return {'success': True, 'numbers': numbers, 'details': ''}
