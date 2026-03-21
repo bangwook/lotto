@@ -46,6 +46,21 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         timeout=60000, wait_until="networkidle",
     )
 
+    # 간소화 페이지 감지 및 처리
+    if '간소화' in (page.title() or '') or '간소화' in (page.inner_text('body')[:200] if page.locator('body').count() > 0 else ''):
+        print('📍 간소화 페이지 감지, 720+ 링크로 이동...')
+        # "연금복권720+" 관련 링크 클릭
+        link = page.locator('a:has-text("연금복권"), a:has-text("720")').first
+        if link.count() > 0:
+            link.click()
+            page.wait_for_load_state("networkidle", timeout=30000)
+            time.sleep(3)
+            print(f'📍 간소화 페이지 이동 후 URL: {page.url}')
+        else:
+            # 링크가 없으면 메인 포탈 경유로 이동
+            page.goto("https://www.dhlottery.co.kr/game/pension720/game.do", timeout=60000, wait_until="networkidle")
+            print(f'📍 메인 포탈 경유 후 URL: {page.url}')
+
     # Wait for iframe to be created and its src to be set by JS
     time.sleep(5)
 

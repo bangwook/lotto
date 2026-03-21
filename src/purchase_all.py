@@ -59,31 +59,21 @@ def extract_game_numbers(page: Page) -> list:
             () => {
                 const games = [];
 
-                // 모든 span에서 ball 관련 클래스를 가진 요소 수집
-                const ballSelectors = [
-                    'span[class*="ball"]',
-                    'span[class*="num"]',
-                    '.ball_645',
-                    '.ballnum',
-                ];
-                const selector = ballSelectors.join(', ');
+                // 645 전용 ball 셀렉터 (span[class*="num"]은 너무 넓어서 제외)
+                const selector = 'span[class*="ball"], .ball_645, .ballnum';
 
-                // 방법 1: 테이블 행 단위로 추출 (선택 테이블 + 결과 테이블)
-                const tableSelectors = [
-                    '#tblNum tbody tr',
-                    '.tbl_display tbody tr',
-                    '#reportRow tr',
-                    '.tbl_data tbody tr',
-                    '#popReceipt tr',
-                ];
-                const rows = document.querySelectorAll(tableSelectors.join(', '));
+                // 방법 1: 테이블 행 단위로 추출
+                const rows = document.querySelectorAll(
+                    '#tblNum tbody tr, .tbl_display tbody tr, #reportRow tr, .tbl_data tbody tr, #popReceipt tr'
+                );
                 for (const row of rows) {
                     const nums = [];
                     row.querySelectorAll(selector).forEach(el => {
                         const n = parseInt(el.textContent.trim());
                         if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
                     });
-                    if (nums.length === 6) games.push(nums);
+                    // 6개 이상이면 앞 6개 사용 (행에 보너스 번호 등 추가 요소 가능)
+                    if (nums.length >= 6) games.push(nums.slice(0, 6));
                 }
 
                 // 방법 2: 전체 ball 요소에서 6개씩 묶어서 추출
