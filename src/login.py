@@ -74,10 +74,13 @@ def login(page: Page) -> None:
     if "securityLoginCheck" in page.url or "loginCheck" in page.url:
         print(f"📍 Security check page: {page.url}, waiting for redirect...")
         try:
-            page.wait_for_url(lambda url: "login" not in url.lower() or "Check" in url, timeout=10000)
+            page.wait_for_url(lambda url: "login" not in url.lower(), timeout=15000)
             page.wait_for_load_state("networkidle")
         except Exception:
-            pass  # 타임아웃이면 현재 URL로 진행
+            # 리다이렉트가 안 끝나면 메인 페이지로 직접 이동
+            print("⚠️ 리다이렉트 타임아웃, 메인 페이지로 직접 이동...")
+            page.goto("https://www.dhlottery.co.kr/main", timeout=60000, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle")
 
     # Debug: 로그인 후 스크린샷
     page.screenshot(path="debug_after_login.png")
