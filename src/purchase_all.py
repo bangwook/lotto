@@ -29,6 +29,14 @@ def get_balance(page: Page) -> dict:
 
     print(f"📍 Current URL: {page.url}")
 
+    # 로그인 페이지로 리다이렉트된 경우 재로그인
+    if "login" in page.url.lower() and "check" not in page.url.lower():
+        print("⚠️ 세션 만료 감지, 재로그인 시도...")
+        login(page)
+        page.goto("https://www.dhlottery.co.kr/mypage/home", timeout=60000, wait_until="domcontentloaded")
+        page.wait_for_load_state("networkidle", timeout=30000)
+        print(f"📍 재로그인 후 URL: {page.url}")
+
     deposit_el = page.locator("#totalAmt")
     deposit_text = deposit_el.inner_text().strip()
 
