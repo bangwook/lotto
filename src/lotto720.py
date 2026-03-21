@@ -21,13 +21,12 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         dry_run: True이면 구매 직전까지만 진행 (테스트용)
 
     Returns:
-        dict: {'success': bool, 'groups': list[int], 'details': str}
+        dict: {'success': bool, 'groups': list[int], 'numbers': list, 'details': str}
     """
     if num_games <= 0:
-        return {'success': False, 'groups': [], 'details': '구매할 매수 없음'}
+        return {'success': False, 'groups': [], 'numbers': [], 'details': '구매할 매수 없음'}
 
     # el.dhlottery.co.kr 서브도메인에 세션 쿠키 복사
-    # 로그인은 www.dhlottery.co.kr에서 이루어지므로 el. 도메인에 쿠키가 없을 수 있음
     context = page.context
     cookies = context.cookies()
     new_cookies = []
@@ -46,115 +45,101 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         timeout=60000, wait_until="networkidle",
     )
 
-    # 간소화 페이지 감지 및 처리
-    if '간소화' in (page.title() or '') or '간소화' in (page.inner_text('body')[:200] if page.locator('body').count() > 0 else ''):
-        print('📍 간소화 페이지 감지, 720+ 링크로 이동...')
-        # "연금복권720+" 관련 링크 클릭
-        link = page.locator('a:has-text("연금복권"), a:has-text("720")').first
-        if link.count() > 0:
-            link.click()
-            page.wait_for_load_state("networkidle", timeout=30000)
-            time.sleep(3)
-            print(f'📍 간소화 페이지 이동 후 URL: {page.url}')
-        else:
-            # 링크가 없으면 메인 포탈 경유로 이동
-            page.goto("https://www.dhlottery.co.kr/game/pension720/game.do", timeout=60000, wait_until="networkidle")
-            print(f'📍 메인 포탈 경유 후 URL: {page.url}')
+    # 간소화 페이지 감지 시 iframe URL로 직접 이동 (direct mode)
+    direct_mode = False
+    page_text = page.inner_text('body')[:300] if page.locator('body').count() > 0 else ''
+    if '간소화' in (page.title() or '') or '간소화' in page_text:
+        print('📍 간소화 페이지 감지, 게임 페이지로 직접 이동...')
+        page.goto(
+            "https://el.dhlottery.co.kr/game/lottery720/game.do",
+            timeout=60000, wait_until="networkidle",
+        )
+        direct_mode = True
+        print(f'📍 직접 이동 URL: {page.url}')
 
-    # Wait for iframe to be created and its src to be set by JS
-    time.sleep(5)
+    if direct_mode:
+        # Direct mode: 게임 UI가 페이지에 직접 로드됨
+        frame = page  # page 자체를 frame처럼 사용
 
-    # iframe이 보이지 않으면 src를 직접 설정 후 재시도
-    for attempt in range(3):
         try:
-            page.locator("#ifrm_tab").wait_for(state="visible", timeout=15000)
-            # iframe src가 비어있으면 직접 설정
-            iframe_src = page.evaluate("""
-                () => {
-                    const iframe = document.querySelector('#ifrm_tab');
-                    return iframe ? iframe.src : '';
-                }
-            """)
-            if not iframe_src or iframe_src == 'about:blank':
-                print(f'⚠️ iframe src가 비어있음, 직접 설정 시도...')
-                page.evaluate("""
-                    () => {
-                        const iframe = document.querySelector('#ifrm_tab');
-                        if (iframe) {
-                            iframe.src = '/game/lottery720/game.do';
-                        }
-                    }
-                """)
-                time.sleep(3)
-            break
+            page.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=30000)
         except Exception:
-            if attempt < 2:
-                print(f'⚠️ iframe 로딩 대기 중... (시도 {attempt + 1}/3)')
-                page.screenshot(path=f"debug_720_attempt_{attempt}.png")
-                # iframe이 없으면 페이지 구조 디버깅
-                page.evaluate("""
+            page.screenshot(path="debug_720_direct_fail.png")
+            print('📸 Screenshot saved: debug_720_direct_fail.png')
+            return {
+                'success': False, 'groups': [], 'numbers': [],
+                'details': '직접 모드: 게임 페이지 콘텐츠 로딩 실패',
+            }
+    else:
+        # Iframe mode: 기존 로직
+        time.sleep(5)
+
+        for attempt in range(3):
+            try:
+                page.locator("#ifrm_tab").wait_for(state="visible", timeout=15000)
+                iframe_src = page.evaluate("""
                     () => {
                         const iframe = document.querySelector('#ifrm_tab');
-                        console.log('iframe exists:', !!iframe);
-                        if (iframe) {
-                            console.log('iframe src:', iframe.src);
-                            console.log('iframe display:', iframe.style.display);
-                            console.log('iframe dimensions:', iframe.offsetWidth, iframe.offsetHeight);
-                        }
+                        return iframe ? iframe.src : '';
                     }
                 """)
-                page.reload(wait_until="networkidle", timeout=60000)
-                time.sleep(5)
-            else:
-                page.screenshot(path="debug_720_iframe_fail.png")
-                print('📸 Screenshot saved: debug_720_iframe_fail.png')
-                # 마지막 시도: 디버그 정보 출력
-                debug_info = page.evaluate("""
-                    () => {
-                        const iframe = document.querySelector('#ifrm_tab');
-                        return {
-                            iframeExists: !!iframe,
-                            iframeSrc: iframe ? iframe.src : 'N/A',
-                            iframeDisplay: iframe ? iframe.style.display : 'N/A',
+                if not iframe_src or iframe_src == 'about:blank':
+                    print('⚠️ iframe src가 비어있음, 직접 설정 시도...')
+                    page.evaluate("""
+                        () => {
+                            const iframe = document.querySelector('#ifrm_tab');
+                            if (iframe) iframe.src = '/game/lottery720/game.do';
+                        }
+                    """)
+                    time.sleep(3)
+                break
+            except Exception:
+                if attempt < 2:
+                    print(f'⚠️ iframe 로딩 대기 중... (시도 {attempt + 1}/3)')
+                    page.screenshot(path=f"debug_720_attempt_{attempt}.png")
+                    page.reload(wait_until="networkidle", timeout=60000)
+                    time.sleep(5)
+                else:
+                    page.screenshot(path="debug_720_iframe_fail.png")
+                    print('📸 Screenshot saved: debug_720_iframe_fail.png')
+                    debug_info = page.evaluate("""
+                        () => ({
+                            iframeExists: !!document.querySelector('#ifrm_tab'),
                             pageTitle: document.title,
                             bodyText: document.body.innerText.substring(0, 500),
-                        };
+                        })
+                    """)
+                    print(f'🔍 디버그 정보: {debug_info}')
+                    return {
+                        'success': False, 'groups': [], 'numbers': [],
+                        'details': f'iframe 로딩 실패. debug: {debug_info}',
                     }
-                """)
-                print(f'🔍 디버그 정보: {debug_info}')
-                return {
-                    'success': False, 'groups': [],
-                    'details': f'iframe #ifrm_tab 로딩 실패 (3회 시도). debug: {debug_info}',
-                }
 
-    frame = page.frame_locator("#ifrm_tab")
+        frame = page.frame_locator("#ifrm_tab")
 
-    # Wait for iframe content
-    try:
-        frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=30000)
-    except Exception:
-        page.screenshot(path="debug_720_content_fail.png")
-        print('📸 Screenshot saved: debug_720_content_fail.png')
-        # 한 번 더 재시도
-        page.reload(wait_until="networkidle", timeout=60000)
-        time.sleep(3)
         try:
-            page.locator("#ifrm_tab").wait_for(state="visible", timeout=15000)
             frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=30000)
         except Exception:
-            return {
-                'success': False, 'groups': [],
-                'details': 'iframe 내부 콘텐츠 로딩 실패',
-            }
+            page.screenshot(path="debug_720_content_fail.png")
+            print('📸 Screenshot saved: debug_720_content_fail.png')
+            page.reload(wait_until="networkidle", timeout=60000)
+            time.sleep(3)
+            try:
+                page.locator("#ifrm_tab").wait_for(state="visible", timeout=15000)
+                frame.locator("#curdeposit, .lpdeposit").first.wait_for(state="attached", timeout=30000)
+            except Exception:
+                return {
+                    'success': False, 'groups': [], 'numbers': [],
+                    'details': 'iframe 내부 콘텐츠 로딩 실패',
+                }
 
-    print('✅ Navigated to Lotto 720 Game Frame')
-
+    print('✅ Navigated to Lotto 720 Game Page')
     time.sleep(1)
 
     # Verify session
     user_id_val = frame.locator("input[name='USER_ID']").get_attribute("value")
     if not user_id_val:
-        return {'success': False, 'groups': [], 'details': '세션 만료 (USER_ID 없음)'}
+        return {'success': False, 'groups': [], 'numbers': [], 'details': '세션 만료 (USER_ID 없음)'}
 
     # Check balance
     balance_val = frame.locator("#curdeposit").get_attribute("value")
@@ -170,7 +155,7 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     required = num_games * 1000
     if current_balance < required:
         return {
-            'success': False, 'groups': [],
+            'success': False, 'groups': [], 'numbers': [],
             'details': f'잔액 부족 (필요: {required:,}원, 보유: {current_balance:,}원)',
         }
 
@@ -185,24 +170,7 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     frame.locator(".lotto720_btn_auto_number").wait_for(state="visible", timeout=15000)
 
     # Remove pause layer popups
-    page.evaluate("""
-        () => {
-            const iframe = document.querySelector('#ifrm_tab');
-            if (iframe && iframe.contentDocument) {
-                const doc = iframe.contentDocument;
-                [
-                    '#pause_layer_pop_02', '#ele_pause_layer_pop02',
-                    '.pause_layer_pop', '.pause_bg'
-                ].forEach(sel => {
-                    doc.querySelectorAll(sel).forEach(el => {
-                        el.style.display = 'none';
-                        el.style.visibility = 'hidden';
-                        el.style.pointerEvents = 'none';
-                    });
-                });
-            }
-        }
-    """)
+    _remove_pause_popups(page, direct_mode)
 
     # Select games with random groups
     groups = []
@@ -210,43 +178,7 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         group = random.randint(1, 5)
         groups.append(group)
 
-        # Select the specific group in the iframe
-        selected = page.evaluate(f"""
-            () => {{
-                const iframe = document.querySelector('#ifrm_tab');
-                if (!iframe || !iframe.contentDocument) return false;
-                const doc = iframe.contentDocument;
-
-                // Strategy 1: Click element with exact text "N조"
-                const allElements = doc.querySelectorAll('a, label, span, button, li, div');
-                for (const el of allElements) {{
-                    const text = el.textContent.trim();
-                    if (text === '{group}조') {{
-                        el.click();
-                        return true;
-                    }}
-                }}
-
-                // Strategy 2: Radio/input with value
-                const inputs = doc.querySelectorAll('input[type="radio"], input[type="button"]');
-                for (const input of inputs) {{
-                    if (input.value === '{group}') {{
-                        input.click();
-                        return true;
-                    }}
-                }}
-
-                // Strategy 3: data attribute
-                const dataEls = doc.querySelectorAll('[data-val="{group}"], [data-value="{group}"]');
-                if (dataEls.length > 0) {{
-                    dataEls[0].click();
-                    return true;
-                }}
-
-                return false;
-            }}
-        """)
-
+        selected = _select_group(page, group, direct_mode)
         if selected:
             print(f'✅ {group}조 선택됨')
         else:
@@ -260,56 +192,12 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         print(f'✅ 자동번호 {i + 1}/{num_games} 생성')
 
     # 자동 생성된 번호 추출 (confirm 전)
-    numbers = []
-    try:
-        numbers = page.evaluate("""
-            () => {
-                const iframe = document.querySelector('#ifrm_tab');
-                if (!iframe || !iframe.contentDocument) return [];
-                const doc = iframe.contentDocument;
-                const games = [];
-
-                // 선택된 게임 영역에서 번호 추출
-                const rows = doc.querySelectorAll('.selected_game_list tr, .game_list tr, .tbl_number tbody tr');
-                for (const row of rows) {
-                    const nums = [];
-                    row.querySelectorAll('span[class*="ball"], span[class*="num"], .num').forEach(el => {
-                        const n = parseInt(el.textContent.trim());
-                        if (!isNaN(n) && n >= 0 && n <= 9) nums.push(n);
-                    });
-                    if (nums.length >= 6) games.push(nums.slice(0, 7));
-                }
-
-                // 대안: 모든 번호 요소에서 추출
-                if (games.length === 0) {
-                    let current = [];
-                    doc.querySelectorAll('.ball720, span[class*="ball"], .lotto720_num span').forEach(el => {
-                        const n = parseInt(el.textContent.trim());
-                        if (!isNaN(n) && n >= 0 && n <= 9) {
-                            current.push(n);
-                            if (current.length === 7) {
-                                games.push([...current]);
-                                current = [];
-                            }
-                        }
-                    });
-                }
-
-                return games;
-            }
-        """)
-        if numbers:
-            print(f'🎱 추출된 번호: {numbers}')
-        else:
-            print('⚠️ 720+ 번호 추출 실패 (빈 배열)')
-    except Exception as e:
-        print(f'⚠️ 720+ 번호 추출 오류: {e}')
+    numbers = _extract_720_numbers(page, direct_mode)
 
     # Confirm selection
     frame.locator(".lotto720_btn_confirm_number").click()
     time.sleep(2)
 
-    # 구매 금액은 num_games * 1000으로 고정 (잔액 검증은 위에서 완료)
     print(f'💰 구매 금액: {num_games * 1000:,}원 ({num_games}매)')
 
     # Dry run: 구매 직전에서 중단
@@ -330,6 +218,128 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     time.sleep(2)
     print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
     return {'success': True, 'groups': groups, 'numbers': numbers, 'details': ''}
+
+
+def _remove_pause_popups(page: Page, direct_mode: bool):
+    """일시정지 팝업 제거"""
+    if direct_mode:
+        page.evaluate("""
+            () => {
+                ['#pause_layer_pop_02', '#ele_pause_layer_pop02',
+                 '.pause_layer_pop', '.pause_bg'].forEach(sel => {
+                    document.querySelectorAll(sel).forEach(el => {
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        el.style.pointerEvents = 'none';
+                    });
+                });
+            }
+        """)
+    else:
+        page.evaluate("""
+            () => {
+                const iframe = document.querySelector('#ifrm_tab');
+                if (iframe && iframe.contentDocument) {
+                    const doc = iframe.contentDocument;
+                    ['#pause_layer_pop_02', '#ele_pause_layer_pop02',
+                     '.pause_layer_pop', '.pause_bg'].forEach(sel => {
+                        doc.querySelectorAll(sel).forEach(el => {
+                            el.style.display = 'none';
+                            el.style.visibility = 'hidden';
+                            el.style.pointerEvents = 'none';
+                        });
+                    });
+                }
+            }
+        """)
+
+
+def _select_group(page: Page, group: int, direct_mode: bool) -> bool:
+    """조 선택"""
+    if direct_mode:
+        return page.evaluate(f"""
+            () => {{
+                const allElements = document.querySelectorAll('a, label, span, button, li, div');
+                for (const el of allElements) {{
+                    if (el.textContent.trim() === '{group}조') {{ el.click(); return true; }}
+                }}
+                const inputs = document.querySelectorAll('input[type="radio"], input[type="button"]');
+                for (const input of inputs) {{
+                    if (input.value === '{group}') {{ input.click(); return true; }}
+                }}
+                const dataEls = document.querySelectorAll('[data-val="{group}"], [data-value="{group}"]');
+                if (dataEls.length > 0) {{ dataEls[0].click(); return true; }}
+                return false;
+            }}
+        """)
+    else:
+        return page.evaluate(f"""
+            () => {{
+                const iframe = document.querySelector('#ifrm_tab');
+                if (!iframe || !iframe.contentDocument) return false;
+                const doc = iframe.contentDocument;
+                const allElements = doc.querySelectorAll('a, label, span, button, li, div');
+                for (const el of allElements) {{
+                    if (el.textContent.trim() === '{group}조') {{ el.click(); return true; }}
+                }}
+                const inputs = doc.querySelectorAll('input[type="radio"], input[type="button"]');
+                for (const input of inputs) {{
+                    if (input.value === '{group}') {{ input.click(); return true; }}
+                }}
+                const dataEls = doc.querySelectorAll('[data-val="{group}"], [data-value="{group}"]');
+                if (dataEls.length > 0) {{ dataEls[0].click(); return true; }}
+                return false;
+            }}
+        """)
+
+
+def _extract_720_numbers(page: Page, direct_mode: bool) -> list:
+    """720+ 자동 생성된 번호 추출"""
+    try:
+        js_body = """
+            const games = [];
+            const rows = doc.querySelectorAll('.selected_game_list tr, .game_list tr, .tbl_number tbody tr');
+            for (const row of rows) {
+                const nums = [];
+                row.querySelectorAll('span[class*="ball"], span[class*="num"], .num').forEach(el => {
+                    const n = parseInt(el.textContent.trim());
+                    if (!isNaN(n) && n >= 0 && n <= 9) nums.push(n);
+                });
+                if (nums.length >= 6) games.push(nums.slice(0, 7));
+            }
+            if (games.length === 0) {
+                let current = [];
+                doc.querySelectorAll('.ball720, span[class*="ball"], .lotto720_num span').forEach(el => {
+                    const n = parseInt(el.textContent.trim());
+                    if (!isNaN(n) && n >= 0 && n <= 9) {
+                        current.push(n);
+                        if (current.length === 7) { games.push([...current]); current = []; }
+                    }
+                });
+            }
+            return games;
+        """
+
+        if direct_mode:
+            numbers = page.evaluate(f"() => {{ const doc = document; {js_body} }}")
+        else:
+            numbers = page.evaluate(f"""
+                () => {{
+                    const iframe = document.querySelector('#ifrm_tab');
+                    if (!iframe || !iframe.contentDocument) return [];
+                    const doc = iframe.contentDocument;
+                    {js_body}
+                }}
+            """)
+
+        if numbers:
+            print(f'🎱 추출된 번호: {numbers}')
+        else:
+            print('⚠️ 720+ 번호 추출 실패 (빈 배열)')
+        return numbers or []
+    except Exception as e:
+        print(f'⚠️ 720+ 번호 추출 오류: {e}')
+        return []
 
 
 def run(playwright: Playwright, dry_run: bool = False) -> None:
