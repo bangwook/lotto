@@ -100,7 +100,7 @@ def send_lotto645_notification(success: bool, numbers: list, balance: int, detai
     _send_telegram('\n'.join(lines))
 
 
-def send_lotto720_notification(success: bool, groups: list, balance: int, details: str = ''):
+def send_lotto720_notification(success: bool, groups: list, balance: int, details: str = '', numbers: list = None):
     """연금복권 720+ 구매 결과를 Telegram으로 전송합니다."""
     icon = "✅" if success else "❌"
     status = "성공" if success else "실패"
@@ -109,9 +109,14 @@ def send_lotto720_notification(success: bool, groups: list, balance: int, detail
     lines = [f"<b>{title}</b>", ""]
 
     if groups:
-        lines.append("🎫 <b>선택 조</b>")
+        lines.append("🎫 <b>선택 번호</b>")
         for i, group in enumerate(groups, 1):
-            lines.append(f"  <b>{chr(64 + i)}</b>  {group}조 (자동)")
+            # 번호가 있으면 조와 함께 표시
+            if numbers and i <= len(numbers):
+                nums_str = ' '.join(str(n) for n in numbers[i - 1])
+                lines.append(f"  <b>{chr(64 + i)}</b>  {group}조  <code>{nums_str}</code>")
+            else:
+                lines.append(f"  <b>{chr(64 + i)}</b>  {group}조 (자동)")
         lines.append("")
 
     lines.extend([

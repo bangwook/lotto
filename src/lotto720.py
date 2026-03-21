@@ -244,6 +244,52 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         time.sleep(1)
         print(f'✅ 자동번호 {i + 1}/{num_games} 생성')
 
+    # 자동 생성된 번호 추출 (confirm 전)
+    numbers = []
+    try:
+        numbers = page.evaluate("""
+            () => {
+                const iframe = document.querySelector('#ifrm_tab');
+                if (!iframe || !iframe.contentDocument) return [];
+                const doc = iframe.contentDocument;
+                const games = [];
+
+                // 선택된 게임 영역에서 번호 추출
+                const rows = doc.querySelectorAll('.selected_game_list tr, .game_list tr, .tbl_number tbody tr');
+                for (const row of rows) {
+                    const nums = [];
+                    row.querySelectorAll('span[class*="ball"], span[class*="num"], .num').forEach(el => {
+                        const n = parseInt(el.textContent.trim());
+                        if (!isNaN(n) && n >= 0 && n <= 9) nums.push(n);
+                    });
+                    if (nums.length >= 6) games.push(nums.slice(0, 7));
+                }
+
+                // 대안: 모든 번호 요소에서 추출
+                if (games.length === 0) {
+                    let current = [];
+                    doc.querySelectorAll('.ball720, span[class*="ball"], .lotto720_num span').forEach(el => {
+                        const n = parseInt(el.textContent.trim());
+                        if (!isNaN(n) && n >= 0 && n <= 9) {
+                            current.push(n);
+                            if (current.length === 7) {
+                                games.push([...current]);
+                                current = [];
+                            }
+                        }
+                    });
+                }
+
+                return games;
+            }
+        """)
+        if numbers:
+            print(f'🎱 추출된 번호: {numbers}')
+        else:
+            print('⚠️ 720+ 번호 추출 실패 (빈 배열)')
+    except Exception as e:
+        print(f'⚠️ 720+ 번호 추출 오류: {e}')
+
     # Confirm selection
     frame.locator(".lotto720_btn_confirm_number").click()
     time.sleep(2)
@@ -256,7 +302,7 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         page.screenshot(path="debug_720_dry_run.png")
         print(f'🧪 [DRY RUN] 구매 직전 중단. 조: {groups}, 금액: {num_games * 1000:,}원')
         print('📸 Screenshot saved: debug_720_dry_run.png')
-        return {'success': True, 'groups': groups, 'details': 'dry_run - 구매 미실행'}
+        return {'success': True, 'groups': groups, 'numbers': numbers, 'details': 'dry_run - 구매 미실행'}
 
     # Purchase
     frame.locator("a:has-text('구매하기')").first.click()
@@ -268,7 +314,7 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
 
     time.sleep(2)
     print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
-    return {'success': True, 'groups': groups, 'details': ''}
+    return {'success': True, 'groups': groups, 'numbers': numbers, 'details': ''}
 
 
 def run(playwright: Playwright, dry_run: bool = False) -> None:

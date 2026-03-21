@@ -59,23 +59,37 @@ def extract_game_numbers(page: Page) -> list:
             () => {
                 const games = [];
 
-                // 방법 1: 선택 테이블에서 추출
-                const rows = document.querySelectorAll(
-                    '#tblNum tbody tr, .tbl_display tbody tr'
-                );
+                // 모든 span에서 ball 관련 클래스를 가진 요소 수집
+                const ballSelectors = [
+                    'span[class*="ball"]',
+                    'span[class*="num"]',
+                    '.ball_645',
+                    '.ballnum',
+                ];
+                const selector = ballSelectors.join(', ');
+
+                // 방법 1: 테이블 행 단위로 추출 (선택 테이블 + 결과 테이블)
+                const tableSelectors = [
+                    '#tblNum tbody tr',
+                    '.tbl_display tbody tr',
+                    '#reportRow tr',
+                    '.tbl_data tbody tr',
+                    '#popReceipt tr',
+                ];
+                const rows = document.querySelectorAll(tableSelectors.join(', '));
                 for (const row of rows) {
                     const nums = [];
-                    row.querySelectorAll('span[class*="ball"]').forEach(el => {
+                    row.querySelectorAll(selector).forEach(el => {
                         const n = parseInt(el.textContent.trim());
                         if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
                     });
                     if (nums.length === 6) games.push(nums);
                 }
 
-                // 방법 2: ball_645 클래스로 추출
+                // 방법 2: 전체 ball 요소에서 6개씩 묶어서 추출
                 if (games.length === 0) {
                     let current = [];
-                    document.querySelectorAll('.ball_645.lrg, .ball_645').forEach(el => {
+                    document.querySelectorAll(selector).forEach(el => {
                         const n = parseInt(el.textContent.trim());
                         if (!isNaN(n) && n >= 1 && n <= 45) {
                             current.push(n);
@@ -85,21 +99,6 @@ def extract_game_numbers(page: Page) -> list:
                             }
                         }
                     });
-                }
-
-                // 방법 3: 구매 결과 영역에서 추출
-                if (games.length === 0) {
-                    const resultRows = document.querySelectorAll(
-                        '#reportRow tr, .tbl_data tbody tr, #popReceipt tr'
-                    );
-                    for (const row of resultRows) {
-                        const nums = [];
-                        row.querySelectorAll('span[class*="ball"], span[class*="num"]').forEach(el => {
-                            const n = parseInt(el.textContent.trim());
-                            if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
-                        });
-                        if (nums.length === 6) games.push(nums);
-                    }
                 }
 
                 return games;
@@ -303,9 +302,12 @@ def run(playwright: Playwright) -> None:
             lotto720_groups = []
             lotto720_details = ''
 
+            lotto720_numbers = []
+
             try:
                 lotto720_result = buy_lotto720(page, LOTTO720_GAMES)
                 lotto720_groups = lotto720_result.get('groups', [])
+                lotto720_numbers = lotto720_result.get('numbers', [])
                 lotto720_success = lotto720_result['success']
                 lotto720_details = lotto720_result.get('details', '')
             except Exception as e:
@@ -331,6 +333,7 @@ def run(playwright: Playwright) -> None:
                     groups=lotto720_groups,
                     balance=current_balance,
                     details=lotto720_details,
+                    numbers=lotto720_numbers,
                 )
             except Exception as e:
                 print(f"❌ 720+ 알림 전송 실패: {e}")

@@ -82,6 +82,12 @@ def login(page: Page) -> None:
             page.goto("https://www.dhlottery.co.kr/main", timeout=60000, wait_until="domcontentloaded")
             page.wait_for_load_state("networkidle")
 
+    # 여전히 login 페이지면 메인으로 직접 이동
+    if "login" in page.url.lower():
+        print("⚠️ 로그인 페이지 잔류, 메인 페이지로 직접 이동...")
+        page.goto("https://www.dhlottery.co.kr/main", timeout=60000, wait_until="domcontentloaded")
+        page.wait_for_load_state("networkidle")
+
     # Debug: 로그인 후 스크린샷
     page.screenshot(path="debug_after_login.png")
     print(f"📍 After login URL: {page.url}")
