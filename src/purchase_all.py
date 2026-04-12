@@ -158,48 +158,9 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         print('⚠️  No games to purchase!')
         return {'success': False, 'numbers': [], 'details': '구매할 게임 없음'}
 
-    # Extract selected numbers before purchase
-    time.sleep(2)
-
-    # 디버그: 테이블 구조 확인
-    debug_info = page.evaluate("""
-        () => {
-            const info = {};
-            // #tblNum 존재 여부 및 구조
-            const tbl = document.querySelector('#tblNum');
-            info.tblExists = !!tbl;
-            info.tblHTML = tbl ? tbl.innerHTML.substring(0, 500) : 'N/A';
-            // tbody 유무
-            info.hasTbody = tbl ? !!tbl.querySelector('tbody') : false;
-            // tr 직접 검색 (tbody 없이)
-            info.directTrCount = tbl ? tbl.querySelectorAll('tr').length : 0;
-            info.tbodyTrCount = tbl ? tbl.querySelectorAll('tbody tr').length : 0;
-            // 모든 ball 요소
-            const allBalls = document.querySelectorAll('span[class*="ball"], .ball_645, .ballnum');
-            info.totalBalls = allBalls.length;
-            info.ballSample = [...allBalls].slice(0, 3).map(b => ({
-                class: b.className, text: b.textContent.trim(), tag: b.tagName
-            }));
-            // 넓은 범위 검색
-            const allNums = document.querySelectorAll('.nums span, .chosen span, #nums span');
-            info.altNumsCount = allNums.length;
-            info.altSample = [...allNums].slice(0, 3).map(b => ({
-                class: b.className, text: b.textContent.trim()
-            }));
-            return info;
-        }
-    """)
-    print(f'🔍 테이블 디버그:')
-    print(f'  tblNum존재={debug_info["tblExists"]}, tbody={debug_info["hasTbody"]}')
-    print(f'  directTR={debug_info["directTrCount"]}, tbodyTR={debug_info["tbodyTrCount"]}')
-    print(f'  totalBalls={debug_info["totalBalls"]}, ballSample={debug_info["ballSample"]}')
-    print(f'  altNums={debug_info["altNumsCount"]}, altSample={debug_info["altSample"]}')
-    print(f'  tblHTML(500)={debug_info["tblHTML"]}')
-
-    numbers = extract_game_numbers(page)
-    if not numbers and manual_numbers:
-        numbers = [list(game) for game in manual_numbers]
-    print(f'🎱 추출된 번호: {numbers}')
+    # 구매 전 번호 추출은 스킵 (DOM에 번호가 즉시 반영되지 않음)
+    # 구매 완료 후 영수증에서 추출
+    numbers = []
 
     # Verify payment amount
     payment_amount_el = page.locator("#payAmt")
@@ -228,12 +189,92 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         print(f"❌ Error: {msg}")
         return {'success': False, 'numbers': numbers, 'details': msg}
 
-    # 구매 완료 후 번호가 없으면 결과 영역에서 재추출
-    if not numbers:
-        print('🔄 구매 완료 후 번호 재추출 시도...')
-        time.sleep(1)
-        numbers = extract_game_numbers(page)
-        print(f'🎱 재추출된 번호: {numbers}')
+    # 구매 완료 후 영수증에서 번호 추출
+    print('🔄 구매 완료 후 번호 추출...')
+    time.sleep(2)
+    numbers = page.evaluate("""
+        () => {
+            const games = [];
+            // 영수증/결과 영역의 모든 컨테이너 탐색
+            // 각 게임 행을 찾아서 번호 추출
+            const containers = document.querySelectorAll(
+                '#popReceipt .tbl_data tbody tr, ' +
+                '#reportRow tr, ' +
+                '.tbl_display tbody tr, ' +
+                '.selected_list li, ' +
+                '.game_list li, ' +
+                '.nums'
+            );
+            for (const row of containers) {
+                const nums = [];
+                row.querySelectorAll('span.ball, span[class*="ball"]').forEach(el => {
+                    const n = parseInt(el.textContent.trim());
+                    if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
+                });
+                if (nums.length >= 6) games.push(nums.slice(0, 6));
+            }
+
+            // 대안: 영수증 내 ball 요소를 6개씩 묶기
+            if (games.length === 0) {
+                // 영수증 팝업 또는 결과 영역 내에서만 검색
+                const receiptArea = document.querySelector('#popReceipt, #reportRow, .tbl_display, .result_area');
+                if (receiptArea) {
+                    let current = [];
+                    receiptArea.querySelectorAll('span.ball, span[class*="ball"]').forEach(el => {
+                        const n = parseInt(el.textContent.trim());
+                        if (!isNaN(n) && n >= 1 && n <= 45) {
+                            current.push(n);
+                            if (current.length === 6) {
+                                games.push([...current]);
+                                current = [];
+                            }
+                        }
+                    });
+                }
+            }
+
+            // 마지막 대안: 페이지 전체 디버그 (어떤 영역에 번호가 있는지)
+            if (games.length === 0) {
+                const allBalls = document.querySelectorAll('span.ball, span[class*="ball"]');
+                const validNums = [];
+                allBalls.forEach(el => {
+                    const n = parseInt(el.textContent.trim());
+                    if (!isNaN(n) && n >= 1 && n <= 45) {
+                        validNums.push({ n, parent: el.parentElement?.className || '', grandparent: el.parentElement?.parentElement?.className || '' });
+                    }
+                });
+                console.log('DEBUG ball parents:', JSON.stringify(validNums.slice(0, 12)));
+            }
+
+            return games;
+        }
+    """)
+    if numbers:
+        print(f'🎱 추출된 번호: {numbers}')
+    else:
+        # 디버그: 구매 후 페이지에서 번호가 있는 영역 찾기
+        debug = page.evaluate("""
+            () => {
+                const allBalls = document.querySelectorAll('span.ball, span[class*="ball"]');
+                const valid = [];
+                allBalls.forEach(el => {
+                    const n = parseInt(el.textContent.trim());
+                    if (!isNaN(n) && n >= 1 && n <= 45) {
+                        valid.push({
+                            num: n,
+                            parentClass: el.parentElement?.className || '',
+                            parentId: el.parentElement?.id || '',
+                            gpClass: el.parentElement?.parentElement?.className || '',
+                            gpId: el.parentElement?.parentElement?.id || '',
+                        });
+                    }
+                });
+                return valid.slice(0, 18);
+            }
+        """)
+        print(f'🔍 번호 요소 디버그 (상위 {len(debug)}개): {debug}')
+    if not numbers and manual_numbers:
+        numbers = [list(game) for game in manual_numbers]
 
     print(f'✅ Lotto 6/45: All {total_games} games purchased successfully!')
     return {'success': True, 'numbers': numbers, 'details': ''}
