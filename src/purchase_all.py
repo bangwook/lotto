@@ -159,6 +159,30 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
 
     # Extract selected numbers before purchase
     time.sleep(2)
+
+    # 디버그: 테이블 구조 확인
+    debug_info = page.evaluate("""
+        () => {
+            const rows = document.querySelectorAll('#tblNum tbody tr');
+            const info = { rowCount: rows.length, rows: [] };
+            rows.forEach((row, i) => {
+                const balls = row.querySelectorAll('span[class*="ball"], .ball_645, .ballnum');
+                const allSpans = row.querySelectorAll('span');
+                info.rows.push({
+                    ballCount: balls.length,
+                    spanCount: allSpans.length,
+                    ballClasses: balls.length > 0 ? balls[0].className : '',
+                    ballTexts: [...balls].map(b => b.textContent.trim()).join(','),
+                    html: row.innerHTML.substring(0, 200),
+                });
+            });
+            return info;
+        }
+    """)
+    print(f'🔍 테이블 디버그: rows={debug_info["rowCount"]}')
+    for i, r in enumerate(debug_info.get('rows', [])):
+        print(f'  행{i}: balls={r["ballCount"]}, spans={r["spanCount"]}, class="{r["ballClasses"]}", nums={r["ballTexts"]}')
+
     numbers = extract_game_numbers(page)
     if not numbers and manual_numbers:
         numbers = [list(game) for game in manual_numbers]
