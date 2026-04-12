@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import time
 from os import environ
 from pathlib import Path
 from dotenv import load_dotenv
@@ -67,8 +68,12 @@ def login(page: Page) -> None:
 
     page.click("#btnLogin")
 
-    # Wait for login to complete
-    page.wait_for_load_state("networkidle")
+    # Wait for login to complete (networkidle는 타임아웃 위험이 있으므로 load + 대기 사용)
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:
+        page.wait_for_load_state("load", timeout=15000)
+        time.sleep(3)
 
     # securityLoginCheck.do 등 중간 리다이렉트 페이지 대기
     if "securityLoginCheck" in page.url or "loginCheck" in page.url:
