@@ -163,25 +163,37 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     # 디버그: 테이블 구조 확인
     debug_info = page.evaluate("""
         () => {
-            const rows = document.querySelectorAll('#tblNum tbody tr');
-            const info = { rowCount: rows.length, rows: [] };
-            rows.forEach((row, i) => {
-                const balls = row.querySelectorAll('span[class*="ball"], .ball_645, .ballnum');
-                const allSpans = row.querySelectorAll('span');
-                info.rows.push({
-                    ballCount: balls.length,
-                    spanCount: allSpans.length,
-                    ballClasses: balls.length > 0 ? balls[0].className : '',
-                    ballTexts: [...balls].map(b => b.textContent.trim()).join(','),
-                    html: row.innerHTML.substring(0, 200),
-                });
-            });
+            const info = {};
+            // #tblNum 존재 여부 및 구조
+            const tbl = document.querySelector('#tblNum');
+            info.tblExists = !!tbl;
+            info.tblHTML = tbl ? tbl.innerHTML.substring(0, 500) : 'N/A';
+            // tbody 유무
+            info.hasTbody = tbl ? !!tbl.querySelector('tbody') : false;
+            // tr 직접 검색 (tbody 없이)
+            info.directTrCount = tbl ? tbl.querySelectorAll('tr').length : 0;
+            info.tbodyTrCount = tbl ? tbl.querySelectorAll('tbody tr').length : 0;
+            // 모든 ball 요소
+            const allBalls = document.querySelectorAll('span[class*="ball"], .ball_645, .ballnum');
+            info.totalBalls = allBalls.length;
+            info.ballSample = [...allBalls].slice(0, 3).map(b => ({
+                class: b.className, text: b.textContent.trim(), tag: b.tagName
+            }));
+            // 넓은 범위 검색
+            const allNums = document.querySelectorAll('.nums span, .chosen span, #nums span');
+            info.altNumsCount = allNums.length;
+            info.altSample = [...allNums].slice(0, 3).map(b => ({
+                class: b.className, text: b.textContent.trim()
+            }));
             return info;
         }
     """)
-    print(f'🔍 테이블 디버그: rows={debug_info["rowCount"]}')
-    for i, r in enumerate(debug_info.get('rows', [])):
-        print(f'  행{i}: balls={r["ballCount"]}, spans={r["spanCount"]}, class="{r["ballClasses"]}", nums={r["ballTexts"]}')
+    print(f'🔍 테이블 디버그:')
+    print(f'  tblNum존재={debug_info["tblExists"]}, tbody={debug_info["hasTbody"]}')
+    print(f'  directTR={debug_info["directTrCount"]}, tbodyTR={debug_info["tbodyTrCount"]}')
+    print(f'  totalBalls={debug_info["totalBalls"]}, ballSample={debug_info["ballSample"]}')
+    print(f'  altNums={debug_info["altNumsCount"]}, altSample={debug_info["altSample"]}')
+    print(f'  tblHTML(500)={debug_info["tblHTML"]}')
 
     numbers = extract_game_numbers(page)
     if not numbers and manual_numbers:
