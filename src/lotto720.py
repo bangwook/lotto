@@ -44,14 +44,18 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     game_urls = [
         ("el.dhlottery.co.kr wrapper", "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72"),
         ("el.dhlottery.co.kr direct", "https://el.dhlottery.co.kr/game/lottery720/game.do"),
-        ("www.dhlottery.co.kr 경유", "https://www.dhlottery.co.kr/gameInfo.do?method=buyLotto&wisession=LP72"),
-        ("www 직접 게임", "https://www.dhlottery.co.kr/gameResult.do?method=pension720"),
+        ("m.dhlottery.co.kr 모바일", "https://m.dhlottery.co.kr/gameInfo.do?method=buyLotto720"),
+        ("m.dhlottery.co.kr 모바일2", "https://m.dhlottery.co.kr/purchase720.do"),
     ]
 
     page_loaded = False
     for url_name, url in game_urls:
         print(f'📍 {url_name} 시도: {url}')
-        page.goto(url, timeout=60000, wait_until="networkidle")
+        try:
+            page.goto(url, timeout=30000, wait_until="networkidle")
+        except Exception:
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            time.sleep(3)
         current_url = page.url.lower()
         page_title = page.title() or ''
         page_text = page.inner_text('body')[:300] if page.locator('body').count() > 0 else ''
