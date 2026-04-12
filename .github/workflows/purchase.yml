@@ -2,6 +2,16 @@ name: Lotto Purchase (Run on GitHub)
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: '구매 대상'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - 645
+          - 720
   schedule:
      # 매주 금요일 저녁 10시 KST (UTC 13:00)
      - cron: '0 13 * * 5'
@@ -9,7 +19,7 @@ on:
 jobs:
   purchase:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -35,18 +45,14 @@ jobs:
         echo "LOTTO720_GAMES=${{ secrets.LOTTO720_GAMES || '0' }}" >> .env
         echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
         echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
-        # Check file capability without exposing content
         ls -la .env
 
     - name: Run Lotto Purchase Workflow
       env:
         PYTHONPATH: src
+        PURCHASE_TARGET: ${{ github.event.inputs.target || 'all' }}
       run: |
-        # 디버그: 환경변수 확인 (값은 숨김)
-        echo "USER_ID set: ${{ secrets.USER_ID != '' }}"
-        echo "PASSWD set: ${{ secrets.PASSWD != '' }}"
-        echo "AUTO_GAMES: ${{ secrets.AUTO_GAMES || '0' }}"
-        # 통합 스크립트 실행 (한 번 로그인으로 모든 작업 수행)
+        echo "Purchase target: $PURCHASE_TARGET"
         python src/purchase_all.py
 
     - name: Upload debug screenshots
@@ -56,4 +62,3 @@ jobs:
         name: debug-screenshots
         path: "*.png"
         if-no-files-found: ignore
-  

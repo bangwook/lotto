@@ -20,6 +20,7 @@ from notify import send_purchase_notification, send_error_notification, send_lot
 AUTO_GAMES = int(environ.get('AUTO_GAMES', '0'))
 MANUAL_NUMBERS = json.loads(environ.get('MANUAL_NUMBERS', '[]'))
 LOTTO720_GAMES = int(environ.get('LOTTO720_GAMES', '0'))
+PURCHASE_TARGET = environ.get('PURCHASE_TARGET', 'all')  # 'all', '645', '720'
 
 
 def get_balance(page: Page) -> dict:
@@ -263,13 +264,18 @@ def run(playwright: Playwright) -> None:
         print(f"💰 예치금 잔액: {balance_info['deposit_balance']:,}원")
         print(f"🛒 구매가능: {balance_info['available_amount']:,}원")
 
-        # Step 3: Calculate total required amount
-        lotto645_games = AUTO_GAMES + len(MANUAL_NUMBERS)
+        # Step 3: Calculate required amounts per target
+        buy_645 = PURCHASE_TARGET in ('all', '645')
+        buy_720 = PURCHASE_TARGET in ('all', '720')
+
+        lotto645_games = (AUTO_GAMES + len(MANUAL_NUMBERS)) if buy_645 else 0
         lotto645_cost = lotto645_games * 1000
-        lotto720_cost = LOTTO720_GAMES * 1000
+        lotto720_cost = (LOTTO720_GAMES * 1000) if buy_720 else 0
         total_required = lotto645_cost + lotto720_cost
 
-        if lotto645_games == 0 and LOTTO720_GAMES == 0:
+        print(f"🎯 구매 대상: {PURCHASE_TARGET} (645: {lotto645_games}게임, 720: {LOTTO720_GAMES if buy_720 else 0}매)")
+
+        if lotto645_games == 0 and (not buy_720 or LOTTO720_GAMES == 0):
             print("⚠️  No games configured.")
             send_error_notification(
                 "로또 구매",
@@ -324,7 +330,7 @@ def run(playwright: Playwright) -> None:
                 print(f"❌ 6/45 알림 전송 실패: {e}")
 
         # Step 5: Buy Lotto 720+ (with separate notification)
-        if LOTTO720_GAMES > 0:
+        if buy_720 and LOTTO720_GAMES > 0:
             print("=" * 40)
             print(f"🎫 Buying Lotto 720+ ({LOTTO720_GAMES}매)...")
             lotto720_success = False
