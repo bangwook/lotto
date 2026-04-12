@@ -39,23 +39,57 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         context.add_cookies(new_cookies)
         print(f'🍪 {len(new_cookies)}개 쿠키를 .dhlottery.co.kr 도메인으로 복사')
 
-    # Navigate to the wrapper page
-    page.goto(
-        "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72",
-        timeout=60000, wait_until="networkidle",
-    )
-
-    # 간소화 페이지 감지 시 iframe URL로 직접 이동 (direct mode)
+    # 720+ 게임 페이지 접근 시도 (여러 URL 순차 시도)
     direct_mode = False
-    page_text = page.inner_text('body')[:300] if page.locator('body').count() > 0 else ''
-    if '간소화' in (page.title() or '') or '간소화' in page_text:
-        print('📍 간소화 페이지 감지, 게임 페이지로 직접 이동...')
-        page.goto(
-            "https://el.dhlottery.co.kr/game/lottery720/game.do",
-            timeout=60000, wait_until="networkidle",
-        )
-        direct_mode = True
-        print(f'📍 직접 이동 URL: {page.url}')
+    game_urls = [
+        ("el.dhlottery.co.kr wrapper", "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72"),
+        ("el.dhlottery.co.kr direct", "https://el.dhlottery.co.kr/game/lottery720/game.do"),
+        ("www.dhlottery.co.kr 경유", "https://www.dhlottery.co.kr/gameInfo.do?method=buyLotto&wisession=LP72"),
+        ("www 직접 게임", "https://www.dhlottery.co.kr/gameResult.do?method=pension720"),
+    ]
+
+    page_loaded = False
+    for url_name, url in game_urls:
+        print(f'📍 {url_name} 시도: {url}')
+        page.goto(url, timeout=60000, wait_until="networkidle")
+        current_url = page.url.lower()
+        page_title = page.title() or ''
+        page_text = page.inner_text('body')[:300] if page.locator('body').count() > 0 else ''
+
+        # 간소화 페이지 또는 로그인/마이페이지로 리다이렉트된 경우 다음 URL 시도
+        if '간소화' in page_title or '간소화' in page_text:
+            print(f'  ⚠️ 간소화 페이지 → 다음 URL 시도')
+            continue
+        if '/login' in current_url or '/mypage' in current_url:
+            print(f'  ⚠️ 리다이렉트됨 ({page.url}) → 다음 URL 시도')
+            continue
+
+        # iframe이 있는지 확인
+        has_iframe = page.locator("#ifrm_tab").count() > 0
+        # 게임 UI 요소가 직접 있는지 확인
+        has_game_ui = page.locator(".lotto720_btn_auto_number, #curdeposit, .lpdeposit").first.count() > 0
+
+        if has_iframe or has_game_ui:
+            direct_mode = not has_iframe
+            page_loaded = True
+            print(f'  ✅ 게임 페이지 로드 성공 ({"direct" if direct_mode else "iframe"} mode)')
+            break
+        else:
+            print(f'  ⚠️ 게임 UI 없음 → 다음 URL 시도')
+
+    if not page_loaded:
+        page.screenshot(path="debug_720_all_urls_fail.png")
+        print('📸 Screenshot saved: debug_720_all_urls_fail.png')
+        debug_info = {
+            'url': page.url,
+            'title': page.title(),
+            'text': page.inner_text('body')[:300] if page.locator('body').count() > 0 else '',
+        }
+        print(f'🔍 최종 디버그: {debug_info}')
+        return {
+            'success': False, 'groups': [], 'numbers': [],
+            'details': '720+ 게임 페이지 접근 불가 (간소화 모드). 모든 URL 시도 실패.',
+        }
 
     if direct_mode:
         # Direct mode: 게임 UI가 페이지에 직접 로드됨
