@@ -68,18 +68,26 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
             print(f'  ⚠️ 리다이렉트됨 ({page.url}) → 다음 URL 시도')
             continue
 
-        # iframe이 있는지 확인
+        # JS가 iframe을 생성할 시간 대기
+        time.sleep(5)
+
+        # 디버그: 페이지 상태 출력
+        page_title_dbg = page.title() or ''
+        page_url_dbg = page.url
         has_iframe = page.locator("#ifrm_tab").count() > 0
-        # 게임 UI 요소가 직접 있는지 확인
         has_game_ui = page.locator(".lotto720_btn_auto_number, #curdeposit, .lpdeposit").first.count() > 0
+        print(f'  📍 URL: {page_url_dbg}, title: {page_title_dbg}, iframe: {has_iframe}, gameUI: {has_game_ui}')
 
         if has_iframe or has_game_ui:
             direct_mode = not has_iframe
             page_loaded = True
             print(f'  ✅ 게임 페이지 로드 성공 ({"direct" if direct_mode else "iframe"} mode)')
             break
-        else:
-            print(f'  ⚠️ 게임 UI 없음 → 다음 URL 시도')
+
+        # iframe이 없으면 페이지 내용 디버그
+        body_text = page.inner_text('body')[:200] if page.locator('body').count() > 0 else ''
+        print(f'  ⚠️ 게임 UI 없음. 페이지 내용: {body_text[:100]}')
+        print(f'  → 다음 URL 시도')
 
     if not page_loaded:
         page.screenshot(path="debug_720_all_urls_fail.png")
