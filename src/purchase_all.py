@@ -158,10 +158,6 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         print('⚠️  No games to purchase!')
         return {'success': False, 'numbers': [], 'details': '구매할 게임 없음'}
 
-    # 구매 전 번호 추출은 스킵 (DOM에 번호가 즉시 반영되지 않음)
-    # 구매 완료 후 영수증에서 추출
-    numbers = []
-
     # Verify payment amount
     payment_amount_el = page.locator("#payAmt")
     payment_text = payment_amount_el.inner_text().strip()
@@ -189,38 +185,51 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         print(f"❌ Error: {msg}")
         return {'success': False, 'numbers': numbers, 'details': msg}
 
-    # 구매 완료 후 영수증에서 번호 추출
+    # 구매 완료 후 결과 팝업에서 번호 추출
     print('🔄 구매 완료 후 번호 추출...')
     time.sleep(2)
+
+    # 결과 팝업/영수증 대기
+    try:
+        page.locator('#popReceipt, .pop_data, .popup_data, #report').first.wait_for(
+            state="visible", timeout=5000
+        )
+    except Exception:
+        pass  # 팝업이 없어도 계속 시도
+
+    page.screenshot(path="debug_after_purchase.png")
+
     numbers = page.evaluate("""
         () => {
             const games = [];
-            // 영수증/결과 영역의 모든 컨테이너 탐색
-            // 각 게임 행을 찾아서 번호 추출
-            const containers = document.querySelectorAll(
-                '#popReceipt .tbl_data tbody tr, ' +
-                '#reportRow tr, ' +
-                '.tbl_display tbody tr, ' +
-                '.selected_list li, ' +
-                '.game_list li, ' +
-                '.nums'
-            );
-            for (const row of containers) {
+
+            // 1) 결과 팝업/영수증 내 행 단위 추출
+            const rowSelectors = [
+                '#popReceipt tr',
+                '.pop_data tr',
+                '.popup_data tr',
+                '#report tr',
+                '.tbl_data tbody tr',
+                '#reportRow tr',
+            ];
+            const rows = document.querySelectorAll(rowSelectors.join(', '));
+            for (const row of rows) {
                 const nums = [];
-                row.querySelectorAll('span.ball, span[class*="ball"]').forEach(el => {
+                row.querySelectorAll('span[class*="ball"]').forEach(el => {
                     const n = parseInt(el.textContent.trim());
                     if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
                 });
                 if (nums.length >= 6) games.push(nums.slice(0, 6));
             }
 
-            // 대안: 영수증 내 ball 요소를 6개씩 묶기
+            // 2) 팝업/결과 컨테이너 내 ball 6개씩 묶기
             if (games.length === 0) {
-                // 영수증 팝업 또는 결과 영역 내에서만 검색
-                const receiptArea = document.querySelector('#popReceipt, #reportRow, .tbl_display, .result_area');
-                if (receiptArea) {
+                const containers = document.querySelectorAll(
+                    '#popReceipt, .pop_data, .popup_data, #report, #reportRow, .tbl_data'
+                );
+                for (const container of containers) {
                     let current = [];
-                    receiptArea.querySelectorAll('span.ball, span[class*="ball"]').forEach(el => {
+                    container.querySelectorAll('span[class*="ball"]').forEach(el => {
                         const n = parseInt(el.textContent.trim());
                         if (!isNaN(n) && n >= 1 && n <= 45) {
                             current.push(n);
@@ -230,49 +239,64 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
                             }
                         }
                     });
+                    if (games.length > 0) break;
                 }
             }
 
-            // 마지막 대안: 페이지 전체 디버그 (어떤 영역에 번호가 있는지)
+            // 3) 선택 영역에서 추출 (번호 선택 버튼 영역 #checkBtnNum 제외)
             if (games.length === 0) {
-                const allBalls = document.querySelectorAll('span.ball, span[class*="ball"]');
-                const validNums = [];
-                allBalls.forEach(el => {
-                    const n = parseInt(el.textContent.trim());
+                let current = [];
+                document.querySelectorAll('span[class*="ball"]').forEach(el => {
+                    // 번호 선택 버튼 영역 내부이면 스킵
+                    if (el.closest('#checkBtnNum, .num_check, .number_box')) return;
+                    const text = el.textContent.trim();
+                    // "자동선택" 등 숫자가 아닌 텍스트 스킵
+                    const n = parseInt(text);
                     if (!isNaN(n) && n >= 1 && n <= 45) {
-                        validNums.push({ n, parent: el.parentElement?.className || '', grandparent: el.parentElement?.parentElement?.className || '' });
+                        current.push(n);
+                        if (current.length === 6) {
+                            games.push([...current]);
+                            current = [];
+                        }
                     }
                 });
-                console.log('DEBUG ball parents:', JSON.stringify(validNums.slice(0, 12)));
             }
 
             return games;
         }
     """)
+
     if numbers:
-        print(f'🎱 추출된 번호: {numbers}')
+        print(f'🎱 추출된 번호 ({len(numbers)}게임): {numbers}')
     else:
-        # 디버그: 구매 후 페이지에서 번호가 있는 영역 찾기
+        # 디버그: 구매 후 페이지에서 ball 요소의 위치 파악
         debug = page.evaluate("""
             () => {
-                const allBalls = document.querySelectorAll('span.ball, span[class*="ball"]');
+                const allBalls = document.querySelectorAll('span[class*="ball"]');
                 const valid = [];
                 allBalls.forEach(el => {
                     const n = parseInt(el.textContent.trim());
                     if (!isNaN(n) && n >= 1 && n <= 45) {
                         valid.push({
                             num: n,
-                            parentClass: el.parentElement?.className || '',
+                            class: el.className,
                             parentId: el.parentElement?.id || '',
-                            gpClass: el.parentElement?.parentElement?.className || '',
+                            parentClass: el.parentElement?.className || '',
                             gpId: el.parentElement?.parentElement?.id || '',
+                            gpClass: el.parentElement?.parentElement?.className || '',
                         });
                     }
                 });
-                return valid.slice(0, 18);
+                // 팝업 존재 여부
+                const popups = ['#popReceipt', '.pop_data', '#report', '#reportRow'].map(s => ({
+                    sel: s, exists: !!document.querySelector(s)
+                }));
+                return { balls: valid.slice(0, 18), popups };
             }
         """)
-        print(f'🔍 번호 요소 디버그 (상위 {len(debug)}개): {debug}')
+        print(f'🔍 번호 요소 디버그: {json.dumps(debug, ensure_ascii=False)}')
+        print(f'📸 Screenshot saved: debug_after_purchase.png')
+
     if not numbers and manual_numbers:
         numbers = [list(game) for game in manual_numbers]
 
