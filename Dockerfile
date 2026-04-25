@@ -2,7 +2,7 @@ FROM python:3.9-slim
 
 # Playwright + Xvfb 시스템 의존성 설치
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb \
+    xvfb xauth \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
     libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
