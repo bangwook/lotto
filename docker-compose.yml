@@ -35,3 +35,14 @@ services:
     env_file:
       - .env.docker
     restart: "no"
+
+  # 당첨 확인
+  lotto-check:
+    build: .
+    container_name: lotto-check
+    environment:
+      - TZ=Asia/Seoul
+    env_file:
+      - .env.docker
+    command: ["python", "src/check_winning.py"]
+    restart: "no"
