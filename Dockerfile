@@ -12,4 +12,5 @@ RUN chmod +x entrypoint.sh
 
 ENV PYTHONPATH=src
 
-CMD ["./entrypoint.sh"]
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["python", "src/purchase_all.py"]
