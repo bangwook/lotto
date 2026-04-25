@@ -1,0 +1,16 @@
+version: '3'
+services:
+  lotto720:
+    build:
+      context: .
+      dockerfile: Dockerfile.720
+    container_name: lotto720
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONPATH=src
+      - PURCHASE_TARGET=720
+      - AUTO_GAMES=0
+      - MANUAL_NUMBERS=[]
+    env_file:
+      - .env.docker
+    restart: "no"
