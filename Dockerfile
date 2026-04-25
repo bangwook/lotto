@@ -1,7 +1,8 @@
 FROM python:3.9-slim
 
-# Playwright 시스템 의존성 설치
+# Playwright + Xvfb 시스템 의존성 설치
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
     libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 \
@@ -21,4 +22,5 @@ COPY src/ src/
 
 ENV PYTHONPATH=src
 
-CMD ["python", "src/purchase_all.py"]
+# Xvfb 가상 디스플레이로 실제 브라우저 모드 실행
+CMD ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1920x1080x24", "python", "src/purchase_all.py"]
