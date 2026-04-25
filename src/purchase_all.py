@@ -128,12 +128,23 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         }
     """)
 
+    # 645 페이지 상태 디버그
+    page.screenshot(path="debug_645_page.png")
+    print(f'📍 645 페이지 URL: {page.url}')
+    page_text_645 = page.inner_text('body')[:500] if page.locator('body').count() > 0 else ''
+    print(f'📍 645 페이지 내용(500자): {page_text_645[:200]}')
+
     # Dismiss popup if present
     try:
         popup_alert = page.locator("#popupLayerAlert")
         if popup_alert.is_visible(timeout=2000):
+            popup_text = popup_alert.inner_text()
+            print(f'📍 팝업 내용: {popup_text}')
+            page.screenshot(path="debug_645_popup.png")
             popup_alert.get_by_role("button", name="확인").click(force=True, timeout=5000)
             print('✅ Dismissed popup alert')
+            time.sleep(1)
+            print(f'📍 팝업 닫은 후 URL: {page.url}')
     except Exception as e:
         print(f'⚠️  Popup handling: {str(e)}')
 
