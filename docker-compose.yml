@@ -1,0 +1,37 @@
+version: '3'
+services:
+  # 645 + 720 전체 구매
+  lotto-all:
+    build: .
+    container_name: lotto-all
+    environment:
+      - TZ=Asia/Seoul
+      - PURCHASE_TARGET=all
+    env_file:
+      - .env.docker
+    restart: "no"
+
+  # 645만 구매
+  lotto-645:
+    build: .
+    container_name: lotto-645
+    environment:
+      - TZ=Asia/Seoul
+      - PURCHASE_TARGET=645
+      - LOTTO720_GAMES=0
+    env_file:
+      - .env.docker
+    restart: "no"
+
+  # 720만 구매
+  lotto-720:
+    build: .
+    container_name: lotto-720
+    environment:
+      - TZ=Asia/Seoul
+      - PURCHASE_TARGET=720
+      - AUTO_GAMES=0
+      - MANUAL_NUMBERS=[]
+    env_file:
+      - .env.docker
+    restart: "no"

@@ -15,11 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install chromium
 
 COPY src/ src/
-COPY .env.docker .env
 
 ENV PYTHONPATH=src
-ENV PURCHASE_TARGET=720
-ENV AUTO_GAMES=0
-ENV MANUAL_NUMBERS=[]
 
 CMD ["python", "src/purchase_all.py"]
