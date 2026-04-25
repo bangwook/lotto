@@ -322,8 +322,10 @@ def run(playwright: Playwright) -> None:
     print(f"🖥️ 브라우저 모드: {'headless' if use_headless else 'headed (Xvfb)'}")
     browser = playwright.chromium.launch(
         headless=use_headless,
+        ignore_default_args=['--enable-automation'],
         args=[
             '--disable-blink-features=AutomationControlled',
+            '--disable-infobars',
             '--no-sandbox',
             '--disable-dev-shm-usage',
         ],
