@@ -317,8 +317,11 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
 
 def run(playwright: Playwright) -> None:
     """메인 실행 함수 - 한 번의 로그인으로 모든 작업 수행"""
+    import os
+    use_headless = os.environ.get('FORCE_HEADLESS') == '1'
+    print(f"🖥️ 브라우저 모드: {'headless' if use_headless else 'headed (Xvfb)'}")
     browser = playwright.chromium.launch(
-        headless=False,
+        headless=use_headless,
         args=[
             '--disable-blink-features=AutomationControlled',
             '--no-sandbox',
