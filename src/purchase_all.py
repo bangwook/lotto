@@ -306,12 +306,28 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
 
 def run(playwright: Playwright) -> None:
     """메인 실행 함수 - 한 번의 로그인으로 모든 작업 수행"""
-    browser = playwright.chromium.launch(headless=True)
+    browser = playwright.chromium.launch(
+        headless=True,
+        args=[
+            '--disable-blink-features=AutomationControlled',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+        ],
+    )
     context = browser.new_context(
         user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         viewport={'width': 1920, 'height': 1080},
+        locale='ko-KR',
     )
     page = context.new_page()
+
+    # headless 감지 우회: navigator.webdriver 제거
+    page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
+        window.chrome = { runtime: {} };
+    """)
 
     current_balance = 0
 
