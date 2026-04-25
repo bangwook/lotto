@@ -22,7 +22,7 @@ def get_balance(page: Page) -> int:
 def check_winning(page: Page) -> list:
     """최근 구매 내역의 당첨 결과를 확인합니다."""
     page.goto(
-        "https://www.dhlottery.co.kr/mypage/lottoBuyListView.do",
+        "https://www.dhlottery.co.kr/mypage/mylotteryledger",
         timeout=60000, wait_until="domcontentloaded",
     )
     page.wait_for_load_state("networkidle", timeout=30000)
