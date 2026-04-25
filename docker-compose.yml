@@ -44,5 +44,5 @@ services:
       - TZ=Asia/Seoul
     env_file:
       - .env.docker
-    command: ["python", "src/check_winning.py"]
+    command: ["bash", "-c", "rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp & sleep 2 && export DISPLAY=:99 && python src/check_winning.py"]
     restart: "no"

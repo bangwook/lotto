@@ -22,7 +22,7 @@ def get_balance(page: Page) -> int:
 def check_winning(page: Page) -> list:
     """최근 구매 내역의 당첨 결과를 확인합니다."""
     page.goto(
-        "https://dhlottery.co.kr/mypage/lottoBuyListView.do",
+        "https://www.dhlottery.co.kr/mypage/lottoBuyListView.do",
         timeout=60000, wait_until="domcontentloaded",
     )
     page.wait_for_load_state("networkidle", timeout=30000)
@@ -92,9 +92,23 @@ def check_winning(page: Page) -> list:
 
 def run(playwright: Playwright) -> None:
     """메인 실행 함수"""
-    browser = playwright.chromium.launch(headless=True)
-    context = browser.new_context()
+    import os
+    use_headless = os.environ.get('FORCE_HEADLESS') == '1'
+    browser = playwright.chromium.launch(
+        headless=use_headless,
+        args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage'],
+    )
+    context = browser.new_context(
+        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        viewport={'width': 1920, 'height': 1080},
+        locale='ko-KR',
+    )
     page = context.new_page()
+    page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        window.chrome = { runtime: {} };
+    """)
 
     try:
         print("=" * 40)

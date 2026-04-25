@@ -1,8 +1,14 @@
 """Telegram 알림 모듈"""
+import html
 import json
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from os import environ
+
+
+def _escape(text: str) -> str:
+    """HTML 특수문자 이스케이프"""
+    return html.escape(str(text)) if text else ''
 
 
 def _send_telegram(text: str):
@@ -69,7 +75,7 @@ def send_purchase_notification(success: bool, numbers: list, balance: int,
     ])
 
     if details:
-        lines.append(f"📝 <b>상세:</b> {details}")
+        lines.append(f"📝 <b>상세:</b> {_escape(details)}")
 
     _send_telegram('\n'.join(lines))
 
@@ -95,7 +101,7 @@ def send_lotto645_notification(success: bool, numbers: list, balance: int, detai
     ])
 
     if details:
-        lines.append(f"📝 <b>상세:</b> {details}")
+        lines.append(f"📝 <b>상세:</b> {_escape(details)}")
 
     _send_telegram('\n'.join(lines))
 
@@ -125,7 +131,7 @@ def send_lotto720_notification(success: bool, groups: list, balance: int, detail
     ])
 
     if details:
-        lines.append(f"📝 <b>상세:</b> {details}")
+        lines.append(f"📝 <b>상세:</b> {_escape(details)}")
 
     _send_telegram('\n'.join(lines))
 
