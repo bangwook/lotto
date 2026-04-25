@@ -7,7 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install --with-deps chromium
 
 COPY src/ src/
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 
 ENV PYTHONPATH=src
 
-CMD ["python", "src/purchase_all.py"]
+CMD ["./entrypoint.sh"]

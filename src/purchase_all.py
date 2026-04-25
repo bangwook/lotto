@@ -307,7 +307,7 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
 def run(playwright: Playwright) -> None:
     """메인 실행 함수 - 한 번의 로그인으로 모든 작업 수행"""
     browser = playwright.chromium.launch(
-        headless=True,
+        headless=False,
         args=[
             '--disable-blink-features=AutomationControlled',
             '--no-sandbox',
