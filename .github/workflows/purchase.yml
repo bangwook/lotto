@@ -1,17 +1,7 @@
-name: Lotto Purchase (Run on GitHub)
+name: Lotto 645 Purchase (GitHub-hosted)
 
 on:
   workflow_dispatch:
-    inputs:
-      target:
-        description: '구매 대상'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - 645
-          - 720
   schedule:
      # 매주 금요일 저녁 10시 KST (UTC 13:00)
      - cron: '0 13 * * 5'
@@ -50,7 +40,7 @@ jobs:
     - name: Run Lotto Purchase Workflow
       env:
         PYTHONPATH: src
-        PURCHASE_TARGET: ${{ github.event.inputs.target || 'all' }}
+        PURCHASE_TARGET: '645'
       run: |
         echo "Purchase target: $PURCHASE_TARGET"
         python src/purchase_all.py

@@ -1,0 +1,48 @@
+name: Lotto 720+ Purchase (Self-hosted)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 매주 금요일 저녁 10시 KST (UTC 13:00)
+    - cron: '0 13 * * 5'
+
+jobs:
+  purchase-720:
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt
+        playwright install chromium
+
+    - name: Create .env file
+      run: |
+        echo "USER_ID=${{ secrets.USER_ID }}" > .env
+        echo "PASSWD=${{ secrets.PASSWD }}" >> .env
+        echo "LOTTO720_GAMES=${{ secrets.LOTTO720_GAMES || '1' }}" >> .env
+        echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
+        echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+
+    - name: Run Lotto 720+ Purchase
+      env:
+        PYTHONPATH: src
+        PURCHASE_TARGET: '720'
+        AUTO_GAMES: '0'
+        MANUAL_NUMBERS: '[]'
+      run: python src/purchase_all.py
+
+    - name: Cleanup .env
+      if: always()
+      run: rm -f .env
+
+    - name: Upload debug screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-screenshots-720
+        path: "*.png"
+        if-no-files-found: ignore
