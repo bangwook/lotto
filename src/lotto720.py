@@ -41,20 +41,24 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
 
     # 720+ 게임 페이지 접근 시도 (여러 URL 순차 시도)
     direct_mode = False
+    # 먼저 메인 사이트 경유 (referrer 설정)
+    page.goto("https://www.dhlottery.co.kr/main", timeout=30000, wait_until="domcontentloaded")
+    time.sleep(2)
+
     game_urls = [
         ("el.dhlottery.co.kr wrapper", "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72"),
         ("el.dhlottery.co.kr direct", "https://el.dhlottery.co.kr/game/lottery720/game.do"),
-        ("m.dhlottery.co.kr 모바일", "https://m.dhlottery.co.kr/gameInfo.do?method=buyLotto720"),
-        ("m.dhlottery.co.kr 모바일2", "https://m.dhlottery.co.kr/purchase720.do"),
     ]
 
     page_loaded = False
     for url_name, url in game_urls:
         print(f'📍 {url_name} 시도: {url}')
         try:
-            page.goto(url, timeout=30000, wait_until="networkidle")
+            page.goto(url, timeout=30000, wait_until="networkidle",
+                       referer="https://www.dhlottery.co.kr/main")
         except Exception:
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.goto(url, timeout=30000, wait_until="domcontentloaded",
+                       referer="https://www.dhlottery.co.kr/main")
             time.sleep(3)
         current_url = page.url.lower()
         page_title = page.title() or ''
