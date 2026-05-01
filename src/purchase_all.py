@@ -213,15 +213,26 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     numbers = page.evaluate("""
         () => {
             const games = [];
+            const seen = new Set();
 
-            // 1) 결과 팝업/영수증 내 행 단위 추출
+            const addGame = (nums) => {
+                if (nums.length < 6) return;
+                const game = nums.slice(0, 6);
+                const key = game.join(',');
+                if (seen.has(key)) return;
+                seen.add(key);
+                games.push(game);
+            };
+
+            // 1) 행 단위 추출 - 모든 가능한 컨테이너에서
             const rowSelectors = [
-                '#popReceipt tr',
-                '.pop_data tr',
-                '.popup_data tr',
-                '#report tr',
-                '.tbl_data tbody tr',
-                '#reportRow tr',
+                '#popReceipt tr', '.pop_data tr', '.popup_data tr',
+                '#report tr', '#reportRow tr',
+                '.tbl_data tbody tr', '.tbl_data tr',
+                '#tblNum tr', '#tblNum tbody tr',
+                '.tbl_display tr', '.tbl_display tbody tr',
+                'table tr',  // 모든 테이블 행
+                'li.game_item', '.selected_list li', '.game_list li',
             ];
             const rows = document.querySelectorAll(rowSelectors.join(', '));
             for (const row of rows) {
@@ -230,13 +241,13 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
                     const n = parseInt(el.textContent.trim());
                     if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
                 });
-                if (nums.length >= 6) games.push(nums.slice(0, 6));
+                addGame(nums);
             }
 
-            // 2) 팝업/결과 컨테이너 내 ball 6개씩 묶기
+            // 2) 보너스: 결과 컨테이너 안에서 6개씩 묶기 (행 구조 없을 때)
             if (games.length === 0) {
                 const containers = document.querySelectorAll(
-                    '#popReceipt, .pop_data, .popup_data, #report, #reportRow, .tbl_data'
+                    '#popReceipt, .pop_data, .popup_data, #report, #reportRow, .tbl_data, .tbl_display, #tblNum'
                 );
                 for (const container of containers) {
                     let current = [];
@@ -245,28 +256,24 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
                         if (!isNaN(n) && n >= 1 && n <= 45) {
                             current.push(n);
                             if (current.length === 6) {
-                                games.push([...current]);
+                                addGame(current);
                                 current = [];
                             }
                         }
                     });
-                    if (games.length > 0) break;
                 }
             }
 
-            // 3) 선택 영역에서 추출 (번호 선택 버튼 영역 #checkBtnNum 제외)
+            // 3) 페이지 전체 스캔 (번호 선택 버튼 영역 제외)
             if (games.length === 0) {
                 let current = [];
                 document.querySelectorAll('span[class*="ball"]').forEach(el => {
-                    // 번호 선택 버튼 영역 내부이면 스킵
-                    if (el.closest('#checkBtnNum, .num_check, .number_box')) return;
-                    const text = el.textContent.trim();
-                    // "자동선택" 등 숫자가 아닌 텍스트 스킵
-                    const n = parseInt(text);
+                    if (el.closest('#checkBtnNum, .num_check, .number_box, #num1, #num2')) return;
+                    const n = parseInt(el.textContent.trim());
                     if (!isNaN(n) && n >= 1 && n <= 45) {
                         current.push(n);
                         if (current.length === 6) {
-                            games.push([...current]);
+                            addGame(current);
                             current = [];
                         }
                     }
