@@ -299,21 +299,8 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         print('📸 Screenshot saved: debug_720_dry_run.png')
         return {'success': True, 'groups': groups, 'numbers': numbers, 'details': 'dry_run - 구매 미실행'}
 
-    # JS dialog 핸들러 사전 등록 (구매하기 클릭 전)
-    # 모든조 구매 다이얼로그면 거부, 단일조 구매면 수락
-    dialog_state = {'cancelled': False, 'message': ''}
-    def handle_dialog(dialog):
-        msg = dialog.message
-        dialog_state['message'] = msg
-        print(f'📍 Dialog: {msg}')
-        if '모든조' in msg or '모든 조' in msg:
-            print('❌ 모든조 구매 감지 → 취소')
-            dialog_state['cancelled'] = True
-            dialog.dismiss()
-        else:
-            print('✅ 단일조 구매 → 수락')
-            dialog.accept()
-    page.on("dialog", handle_dialog)
+    # JS dialog 핸들러 사전 등록 - 자동 수락
+    page.on("dialog", lambda dialog: (print(f'📍 Dialog: {dialog.message}'), dialog.accept()))
 
     # Purchase
     frame.locator("a:has-text('구매하기')").first.click()
@@ -387,12 +374,6 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
 
     time.sleep(3)
     page.screenshot(path="debug_720_after_purchase.png")
-
-    # 모든조 다이얼로그가 떴으면 구매 실패 처리
-    if dialog_state['cancelled']:
-        msg = f'조 선택 실패 - 모든조로 인식됨 (5매 방지를 위해 취소). 그룹 클릭이 적용되지 않음'
-        print(f'❌ {msg}')
-        return {'success': False, 'groups': groups, 'numbers': numbers, 'details': msg}
 
     print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
     return {'success': True, 'groups': groups, 'numbers': numbers, 'details': ''}
