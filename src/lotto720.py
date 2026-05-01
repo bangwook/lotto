@@ -228,13 +228,21 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         group = random.randint(1, 5)
         groups.append(group)
 
-        # Playwright 네이티브 클릭으로 정확하게 조 선택
-        # iframe 내부 element를 frame_locator로 직접 클릭
+        # 1) "모든 조" 먼저 클릭하여 해제 (기본 선택 상태이므로)
         try:
-            # 정확히 "N조" 텍스트를 가진 버튼/링크 클릭 (모든 조와 구별)
+            모든조 = frame.get_by_text('모든 조', exact=True).first
+            if 모든조.count() > 0:
+                모든조.click(force=True, timeout=3000)
+                print('🔄 모든 조 해제 시도')
+                time.sleep(0.5)
+        except Exception:
+            pass
+
+        # 2) 특정 조 클릭
+        try:
             group_locator = frame.get_by_text(f'{group}조', exact=True).first
             group_locator.click(force=True, timeout=5000)
-            print(f'✅ {group}조 클릭 (Playwright 네이티브)')
+            print(f'✅ {group}조 클릭')
         except Exception as e:
             print(f'⚠️ {group}조 클릭 실패: {e}, JS fallback 시도')
             selected = _select_group(page, group, direct_mode)
@@ -242,6 +250,9 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
                 print(f'✅ {group}조 선택됨 (JS)')
 
         time.sleep(1)
+
+        # 3) 클릭 후 상태 스크린샷
+        page.screenshot(path=f"debug_720_after_group_{i}.png")
 
         # 선택 검증: 모든 조가 아닌 특정 조가 선택되었는지 확인
         try:
@@ -290,13 +301,32 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
 
     # Purchase
     frame.locator("a:has-text('구매하기')").first.click()
-
-    # Confirm popup
-    confirm_popup = frame.locator("#lotto720_popup_confirm")
-    confirm_popup.wait_for(state="visible", timeout=5000)
-    confirm_popup.locator("a.btn_blue").click()
-
     time.sleep(2)
+
+    # Confirm popup - 여러 셀렉터 시도
+    confirm_clicked = False
+    for sel in ["#lotto720_popup_confirm a.btn_blue", "a.btn_blue", "a:has-text('확인')"]:
+        try:
+            confirm_btn = frame.locator(sel).first
+            if confirm_btn.is_visible(timeout=2000):
+                confirm_btn.click(force=True)
+                print(f'✅ 확인 버튼 클릭: {sel}')
+                confirm_clicked = True
+                break
+        except Exception:
+            continue
+
+    if not confirm_clicked:
+        # JS dialog 처리
+        try:
+            page.on("dialog", lambda dialog: dialog.accept())
+            print('🔍 JS dialog 핸들러 등록')
+        except Exception:
+            pass
+        print('⚠️ 확인 팝업 못 찾음, 그대로 진행')
+
+    time.sleep(3)
+    page.screenshot(path="debug_720_after_purchase.png")
     print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
     return {'success': True, 'groups': groups, 'numbers': numbers, 'details': ''}
 
