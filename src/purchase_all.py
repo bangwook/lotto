@@ -135,18 +135,33 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     print(f'📍 645 페이지 내용(500자): {page_text_645[:200]}')
 
     # Dismiss popup if present
+    blocking_popup_msg = None
     try:
         popup_alert = page.locator("#popupLayerAlert")
         if popup_alert.is_visible(timeout=2000):
-            popup_text = popup_alert.inner_text()
+            popup_text = popup_alert.inner_text().strip()
             print(f'📍 팝업 내용: {popup_text}')
             page.screenshot(path="debug_645_popup.png")
+
+            # 차단성 팝업 감지 (구매 불가 사유)
+            blocking_keywords = ['판매시간이 아닙니다', '회차정보가 존재하지 않습니다',
+                                 '판매가 종료', '점검 중', '이용이 불가']
+            for keyword in blocking_keywords:
+                if keyword in popup_text:
+                    blocking_popup_msg = popup_text.split('\n')[0].strip()
+                    break
+
             popup_alert.get_by_role("button", name="확인").click(force=True, timeout=5000)
             print('✅ Dismissed popup alert')
             time.sleep(1)
             print(f'📍 팝업 닫은 후 URL: {page.url}')
     except Exception as e:
         print(f'⚠️  Popup handling: {str(e)}')
+
+    # 차단성 팝업이면 즉시 실패 반환
+    if blocking_popup_msg:
+        print(f'❌ 구매 불가: {blocking_popup_msg}')
+        return {'success': False, 'numbers': [], 'details': blocking_popup_msg}
 
     # Manual numbers
     if manual_numbers and len(manual_numbers) > 0:
