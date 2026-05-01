@@ -228,17 +228,48 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         group = random.randint(1, 5)
         groups.append(group)
 
-        selected = _select_group(page, group, direct_mode)
-        if selected:
-            print(f'✅ {group}조 선택됨')
-        else:
-            print(f'⚠️ {group}조 선택 실패, 기본값 사용')
+        # Playwright 네이티브 클릭으로 정확하게 조 선택
+        # iframe 내부 element를 frame_locator로 직접 클릭
+        try:
+            # 정확히 "N조" 텍스트를 가진 버튼/링크 클릭 (모든 조와 구별)
+            group_locator = frame.get_by_text(f'{group}조', exact=True).first
+            group_locator.click(force=True, timeout=5000)
+            print(f'✅ {group}조 클릭 (Playwright 네이티브)')
+        except Exception as e:
+            print(f'⚠️ {group}조 클릭 실패: {e}, JS fallback 시도')
+            selected = _select_group(page, group, direct_mode)
+            if selected:
+                print(f'✅ {group}조 선택됨 (JS)')
 
-        time.sleep(0.5)
+        time.sleep(1)
+
+        # 선택 검증: 모든 조가 아닌 특정 조가 선택되었는지 확인
+        try:
+            verify = page.evaluate(f"""
+                () => {{
+                    const iframe = document.querySelector('#ifrm_tab');
+                    if (!iframe || !iframe.contentDocument) return null;
+                    const doc = iframe.contentDocument;
+                    // 활성/선택된 조 버튼 찾기
+                    const all = doc.querySelectorAll('a, button, label, li, div');
+                    const active = [];
+                    all.forEach(el => {{
+                        const cls = el.className || '';
+                        if ((cls.includes('active') || cls.includes('selected') || cls.includes('on')) &&
+                            (el.textContent.trim().includes('조'))) {{
+                            active.push(el.textContent.trim().substring(0, 20));
+                        }}
+                    }});
+                    return active;
+                }}
+            """)
+            print(f'🔍 활성화된 조: {verify}')
+        except Exception:
+            pass
 
         # Click auto number
         frame.locator(".lotto720_btn_auto_number").click(force=True)
-        time.sleep(1)
+        time.sleep(1.5)
         print(f'✅ 자동번호 {i + 1}/{num_games} 생성')
 
     # 자동 생성된 번호 추출 (confirm 전)
