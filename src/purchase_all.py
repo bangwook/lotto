@@ -198,7 +198,7 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
 
     # 구매 완료 후 결과 팝업에서 번호 추출
     print('🔄 구매 완료 후 번호 추출...')
-    time.sleep(2)
+    time.sleep(3)
 
     # 결과 팝업/영수증 대기
     try:
@@ -209,6 +209,7 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         pass  # 팝업이 없어도 계속 시도
 
     page.screenshot(path="debug_after_purchase.png")
+    print(f'📍 구매 후 URL: {page.url}')
 
     numbers = page.evaluate("""
         () => {
@@ -284,36 +285,69 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         }
     """)
 
-    if numbers:
+    if numbers and len(numbers) >= total_games:
         print(f'🎱 추출된 번호 ({len(numbers)}게임): {numbers}')
     else:
-        # 디버그: 구매 후 페이지에서 ball 요소의 위치 파악
-        debug = page.evaluate("""
-            () => {
-                const allBalls = document.querySelectorAll('span[class*="ball"]');
-                const valid = [];
-                allBalls.forEach(el => {
-                    const n = parseInt(el.textContent.trim());
-                    if (!isNaN(n) && n >= 1 && n <= 45) {
-                        valid.push({
-                            num: n,
-                            class: el.className,
-                            parentId: el.parentElement?.id || '',
-                            parentClass: el.parentElement?.className || '',
-                            gpId: el.parentElement?.parentElement?.id || '',
-                            gpClass: el.parentElement?.parentElement?.className || '',
-                        });
+        # Fallback 1: 구매내역 페이지에서 최근 번호 추출
+        print(f'🔄 영수증 추출 부족 ({len(numbers) if numbers else 0}/{total_games}), 구매내역 페이지에서 재시도...')
+        try:
+            page.goto("https://www.dhlottery.co.kr/mypage/mylotteryledger",
+                      timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle", timeout=15000)
+            time.sleep(2)
+            page.screenshot(path="debug_645_ledger.png")
+
+            ledger_numbers = page.evaluate(f"""
+                () => {{
+                    const games = [];
+                    const seen = new Set();
+                    const addGame = (nums) => {{
+                        if (nums.length < 6) return;
+                        const game = nums.slice(0, 6);
+                        const key = game.join(',');
+                        if (seen.has(key)) return;
+                        seen.add(key);
+                        games.push(game);
+                    }};
+
+                    // 모든 행에서 6개씩 ball 추출
+                    const rows = document.querySelectorAll('tr, li, .game_item, .item');
+                    for (const row of rows) {{
+                        const nums = [];
+                        row.querySelectorAll('span[class*="ball"]').forEach(el => {{
+                            const n = parseInt(el.textContent.trim());
+                            if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
+                        }});
+                        if (nums.length >= 6 && nums.length <= 8) {{
+                            addGame(nums);
+                            if (games.length >= {total_games}) break;
+                        }}
+                    }}
+                    return games.slice(0, {total_games});
+                }}
+            """)
+            if ledger_numbers and len(ledger_numbers) > 0:
+                numbers = ledger_numbers
+                print(f'🎱 구매내역에서 추출 ({len(numbers)}게임): {numbers}')
+            else:
+                print('⚠️ 구매내역에서도 번호 추출 실패')
+                # 디버그: 페이지 ball 요소 정보
+                debug = page.evaluate("""
+                    () => {
+                        const balls = [...document.querySelectorAll('span[class*="ball"]')]
+                            .map(el => ({
+                                num: el.textContent.trim(),
+                                class: el.className.substring(0, 60),
+                                parentTag: el.parentElement?.tagName || '',
+                                parentClass: (el.parentElement?.className || '').substring(0, 60),
+                            }))
+                            .slice(0, 20);
+                        return { ballCount: document.querySelectorAll('span[class*="ball"]').length, balls };
                     }
-                });
-                // 팝업 존재 여부
-                const popups = ['#popReceipt', '.pop_data', '#report', '#reportRow'].map(s => ({
-                    sel: s, exists: !!document.querySelector(s)
-                }));
-                return { balls: valid.slice(0, 18), popups };
-            }
-        """)
-        print(f'🔍 번호 요소 디버그: {json.dumps(debug, ensure_ascii=False)}')
-        print(f'📸 Screenshot saved: debug_after_purchase.png')
+                """)
+                print(f'🔍 구매내역 ball 디버그: {json.dumps(debug, ensure_ascii=False)}')
+        except Exception as e:
+            print(f'⚠️ 구매내역 페이지 접근 실패: {e}')
 
     if not numbers and manual_numbers:
         numbers = [list(game) for game in manual_numbers]
