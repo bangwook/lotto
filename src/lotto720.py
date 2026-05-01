@@ -348,25 +348,77 @@ def _extract_720_numbers(page: Page, direct_mode: bool) -> list:
     try:
         js_body = """
             const games = [];
-            const rows = doc.querySelectorAll('.selected_game_list tr, .game_list tr, .tbl_number tbody tr');
-            for (const row of rows) {
-                const nums = [];
-                row.querySelectorAll('span[class*="ball"], span[class*="num"], .num').forEach(el => {
-                    const n = parseInt(el.textContent.trim());
-                    if (!isNaN(n) && n >= 0 && n <= 9) nums.push(n);
-                });
-                if (nums.length >= 6) games.push(nums.slice(0, 7));
-            }
-            if (games.length === 0) {
+            const seen = new Set();
+
+            const addGame = (nums) => {
+                if (nums.length < 6) return;
+                const game = nums.slice(0, 7);
+                const key = game.join('');
+                if (seen.has(key)) return;
+                seen.add(key);
+                games.push(game);
+            };
+
+            // 720+ 페이지에서 자동번호 클릭 후 표시되는 6자리 숫자 박스
+            // 박스 안에 0-9 숫자 한 자리씩 표시됨
+            // 셀렉터 후보: .number, .digit, .lpcnumber, [class*="num"]
+            const boxSelectors = [
+                '.lpcurnum span', '.lpcurnum div',
+                '.lottonum span', '.lottonum div',
+                '.number span', '.digit',
+                'input[name*="num"]',
+                '.ball720', '.lotto720_num',
+                '.num_box span', '.num_box div',
+                '.lotto720_select_num span', '.lotto720_select_num li',
+                '.selected_num span', '.selected_num li',
+                'li.num', 'span.num',
+            ];
+
+            // 각 셀렉터별로 시도
+            for (const sel of boxSelectors) {
+                const elements = doc.querySelectorAll(sel);
+                if (elements.length === 0) continue;
+
                 let current = [];
-                doc.querySelectorAll('.ball720, span[class*="ball"], .lotto720_num span').forEach(el => {
-                    const n = parseInt(el.textContent.trim());
-                    if (!isNaN(n) && n >= 0 && n <= 9) {
+                elements.forEach(el => {
+                    const text = el.textContent.trim();
+                    const value = el.value !== undefined ? el.value : text;
+                    const n = parseInt(value);
+                    if (!isNaN(n) && n >= 0 && n <= 9 && value.length === 1) {
                         current.push(n);
-                        if (current.length === 7) { games.push([...current]); current = []; }
+                        if (current.length === 6) {
+                            addGame(current);
+                            current = [];
+                        }
                     }
                 });
+                if (games.length > 0) break;
             }
+
+            // 디버그: 페이지 전체 구조 (게임 추출 실패 시)
+            if (games.length === 0) {
+                const allInputs = [...doc.querySelectorAll('input[type="text"], input[type="hidden"]')]
+                    .filter(i => i.value && i.value.length === 1 && /\\d/.test(i.value))
+                    .map(i => ({ name: i.name, value: i.value, class: i.className }));
+                games._debug_inputs = allInputs.slice(0, 15);
+
+                // 1자리 숫자만 있는 모든 요소 수집
+                const singleDigits = [];
+                doc.querySelectorAll('span, div, li, td').forEach(el => {
+                    const text = el.textContent.trim();
+                    if (text.length === 1 && /^\\d$/.test(text)) {
+                        singleDigits.push({
+                            num: text,
+                            tag: el.tagName,
+                            class: el.className.substring(0, 50),
+                            id: el.id,
+                            parentClass: el.parentElement?.className.substring(0, 50) || ''
+                        });
+                    }
+                });
+                games._debug_digits = singleDigits.slice(0, 20);
+            }
+
             return games;
         """
 
@@ -382,11 +434,51 @@ def _extract_720_numbers(page: Page, direct_mode: bool) -> list:
                 }}
             """)
 
-        if numbers:
+        if numbers and isinstance(numbers, list) and len(numbers) > 0:
             print(f'🎱 추출된 번호: {numbers}')
+            return numbers
         else:
             print('⚠️ 720+ 번호 추출 실패 (빈 배열)')
-        return numbers or []
+            # 디버그 정보 출력 (현재 코드에서는 evaluate가 dict를 반환할 수 있게 변경 필요)
+            try:
+                debug_info = page.evaluate("""
+                    () => {
+                        const iframe = document.querySelector('#ifrm_tab');
+                        if (!iframe || !iframe.contentDocument) return null;
+                        const doc = iframe.contentDocument;
+
+                        const inputs = [...doc.querySelectorAll('input')]
+                            .filter(i => i.value)
+                            .slice(0, 20)
+                            .map(i => ({
+                                name: i.name || '', id: i.id || '',
+                                value: String(i.value).substring(0, 20),
+                                class: i.className.substring(0, 60)
+                            }));
+
+                        const digits = [];
+                        doc.querySelectorAll('span, div, li, td').forEach(el => {
+                            if (digits.length >= 30) return;
+                            const text = el.textContent.trim();
+                            if (text.length === 1 && /^\\d$/.test(text)) {
+                                digits.push({
+                                    num: text,
+                                    tag: el.tagName,
+                                    class: el.className.substring(0, 50),
+                                    id: el.id || '',
+                                    parentClass: (el.parentElement?.className || '').substring(0, 50)
+                                });
+                            }
+                        });
+
+                        return { inputs, digits };
+                    }
+                """)
+                print(f'🔍 720+ 디버그 inputs: {debug_info["inputs"][:10]}')
+                print(f'🔍 720+ 디버그 digits: {debug_info["digits"][:15]}')
+            except Exception as e:
+                print(f'⚠️ 디버그 정보 수집 실패: {e}')
+            return []
     except Exception as e:
         print(f'⚠️ 720+ 번호 추출 오류: {e}')
         return []
