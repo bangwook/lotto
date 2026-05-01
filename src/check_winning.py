@@ -106,6 +106,7 @@ def run(playwright: Playwright) -> None:
     page = context.new_page()
     page.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         window.chrome = { runtime: {} };
     """)

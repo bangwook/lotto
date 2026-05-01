@@ -344,9 +344,11 @@ def run(playwright: Playwright) -> None:
     )
     page = context.new_page()
 
-    # headless 감지 우회: navigator.webdriver 제거
+    # headless 감지 우회: navigator.webdriver 제거 + Linux를 Win32로 위장
+    # 동행복권이 navigator.platform이 Linux이면 모바일로 리다이렉트함
     page.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
         window.chrome = { runtime: {} };

@@ -47,7 +47,7 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
 
     game_urls = [
         ("el.dhlottery.co.kr wrapper", "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72"),
-        ("el.dhlottery.co.kr direct", "https://el.dhlottery.co.kr/game/lottery720/game.do"),
+        ("el.dhlottery.co.kr direct (pension720)", "https://el.dhlottery.co.kr/game/pension720/game.jsp"),
     ]
 
     page_loaded = False
