@@ -299,13 +299,28 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         print('📸 Screenshot saved: debug_720_dry_run.png')
         return {'success': True, 'groups': groups, 'numbers': numbers, 'details': 'dry_run - 구매 미실행'}
 
+    # JS dialog 핸들러 사전 등록 (구매하기 클릭 전)
+    page.on("dialog", lambda dialog: (print(f'📍 Dialog: {dialog.message}'), dialog.accept()))
+
     # Purchase
     frame.locator("a:has-text('구매하기')").first.click()
-    time.sleep(2)
+    time.sleep(1)
+    page.screenshot(path="debug_720_purchase_click.png")
 
-    # Confirm popup - 여러 셀렉터 시도
+    # Confirm popup - 다양한 셀렉터 시도
     confirm_clicked = False
-    for sel in ["#lotto720_popup_confirm a.btn_blue", "a.btn_blue", "a:has-text('확인')"]:
+    confirm_selectors = [
+        "#lotto720_popup_confirm a.btn_blue",
+        "#lotto720_popup_confirm .btn_blue",
+        "a.btn_blue",
+        ".btn_blue",
+        "a:has-text('확인')",
+        "button:has-text('확인')",
+        ".popup_btn .ok",
+        ".btn_ok",
+        "input[value='확인']",
+    ]
+    for sel in confirm_selectors:
         try:
             confirm_btn = frame.locator(sel).first
             if confirm_btn.is_visible(timeout=2000):
@@ -316,18 +331,50 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         except Exception:
             continue
 
+    # iframe 외부에서도 시도
     if not confirm_clicked:
-        # JS dialog 처리
+        for sel in confirm_selectors:
+            try:
+                confirm_btn = page.locator(sel).first
+                if confirm_btn.is_visible(timeout=1000):
+                    confirm_btn.click(force=True)
+                    print(f'✅ 확인 버튼 클릭 (page): {sel}')
+                    confirm_clicked = True
+                    break
+            except Exception:
+                continue
+
+    if not confirm_clicked:
+        # 디버그: 현재 보이는 버튼/링크 출력
         try:
-            page.on("dialog", lambda dialog: dialog.accept())
-            print('🔍 JS dialog 핸들러 등록')
+            visible_buttons = page.evaluate("""
+                () => {
+                    const iframe = document.querySelector('#ifrm_tab');
+                    if (!iframe || !iframe.contentDocument) return [];
+                    const doc = iframe.contentDocument;
+                    const result = [];
+                    doc.querySelectorAll('a, button, input[type="button"]').forEach(el => {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0) {
+                            result.push({
+                                tag: el.tagName,
+                                text: (el.textContent || el.value || '').trim().substring(0, 30),
+                                class: el.className.substring(0, 60),
+                                id: el.id
+                            });
+                        }
+                    });
+                    return result.slice(0, 25);
+                }
+            """)
+            print(f'🔍 보이는 버튼들: {visible_buttons}')
         except Exception:
             pass
-        print('⚠️ 확인 팝업 못 찾음, 그대로 진행')
+        print('⚠️ 확인 팝업 못 찾음')
 
     time.sleep(3)
     page.screenshot(path="debug_720_after_purchase.png")
-    print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
+    print(f'✅ Lotto 720: {num_games}매 구매 시도 완료! (조: {groups})')
     return {'success': True, 'groups': groups, 'numbers': numbers, 'details': ''}
 
 
