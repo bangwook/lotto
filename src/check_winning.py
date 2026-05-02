@@ -180,53 +180,67 @@ def get_purchases(page: Page) -> dict:
     page.screenshot(path="debug_ledger.png")
     print(f"Current URL: {page.url}")
 
-    # 페이지 텍스트에서 패턴 매칭으로 게임 추출
-    # 형식 (줄별):
-    # 2026-05-02 / 연금복권720+ / 314 / 3조 068907 / 1 / 미추첨 / - / 2026-05-07 / 미해당
-    # 2026-05-01 / 로또6/45 / 1222 / NNNNN NNNNN ... / 6 / 미당첨 / - / 2026-05-02 / 미해당
+    # 페이지 텍스트를 라인 단위로 파싱
+    # 형식 (각 항목이 9줄):
+    #   날짜 / 복권명 / 회차 / 선택번호 / 매수 / 당첨결과 / 당첨금 / 추첨일자 / 인증여부
     body_text = page.inner_text('body')
+    lines = [ln.strip() for ln in body_text.split('\n')]
 
-    # 720+ 추출: "연금복권720+\n회차\nN조 NNNNNN\n매수\n당첨결과"
     lotto720 = []
-    for m in re.finditer(
-        r'연금복권720\+\s*\n\s*(\d+)\s*\n\s*(\d)조\s*(\d{6})\s*\n\s*\d+\s*\n\s*([^\n]+)',
-        body_text
-    ):
-        round_no, group, digits, result = m.group(1), m.group(2), m.group(3), m.group(4).strip()
-        rank_match = re.search(r'(\d)등', result)
-        rank = rank_match.group(1) if rank_match else ('미추첨' if '미추첨' in result else '미당첨')
-        lotto720.append({
-            'round': int(round_no),
-            'group': group,
-            'digits': [int(d) for d in digits],
-            'rank': rank,
-        })
-
-    # 645 추출: "로또6/45\n회차\n번호텍스트\n매수\n당첨결과"
     lotto645 = []
-    for m in re.finditer(
-        r'로또6/45\s*\n\s*(\d+)\s*\n\s*([^\n]+)\s*\n\s*\d+\s*\n\s*([^\n]+)',
-        body_text
-    ):
-        round_no, nums_text, result = m.group(1), m.group(2).strip(), m.group(3).strip()
-        rank_match = re.search(r'(\d)등', result)
-        rank = rank_match.group(1) if rank_match else ('미추첨' if '미추첨' in result else '미당첨')
-        lotto645.append({
-            'round': int(round_no),
-            'raw_numbers': nums_text,
-            'numbers': [],
-            'rank': rank,
-        })
+
+    for i, line in enumerate(lines):
+        # 720+ 항목 시작 (복권명 줄)
+        if line == '연금복권720+' and i + 4 < len(lines):
+            round_line = lines[i + 1]
+            num_line = lines[i + 2]
+            # quantity_line = lines[i + 3]  # 매수
+            result_line = lines[i + 4] if i + 4 < len(lines) else ''
+
+            # 720+ 메뉴 항목 (필터 영역)이면 스킵
+            if not round_line.isdigit():
+                continue
+
+            # 선택번호 파싱: "3조 068907"
+            m = re.match(r'(\d)조\s*(\d{6})', num_line)
+            if not m:
+                continue
+
+            group, digits = m.group(1), m.group(2)
+            rank_match = re.search(r'(\d)등', result_line)
+            rank = rank_match.group(1) if rank_match else ('미추첨' if '미추첨' in result_line else '미당첨')
+
+            lotto720.append({
+                'round': int(round_line),
+                'group': group,
+                'digits': [int(d) for d in digits],
+                'rank': rank,
+            })
+
+        # 645 항목 시작
+        elif line == '로또6/45' and i + 4 < len(lines):
+            round_line = lines[i + 1]
+            num_line = lines[i + 2]
+            result_line = lines[i + 4] if i + 4 < len(lines) else ''
+
+            if not round_line.isdigit():
+                continue
+
+            rank_match = re.search(r'(\d)등', result_line)
+            rank = rank_match.group(1) if rank_match else ('미추첨' if '미추첨' in result_line else '미당첨')
+
+            lotto645.append({
+                'round': int(round_line),
+                'raw_numbers': num_line,
+                'numbers': [],
+                'rank': rank,
+            })
 
     print(f'🎫 720+ 항목: {len(lotto720)}, 645 항목: {len(lotto645)}')
     if lotto720:
         print(f'  720 샘플: {lotto720[0]}')
     if lotto645:
         print(f'  645 샘플: {lotto645[0]}')
-
-    # 디버그: 본문 일부 (추출 실패 시)
-    if not lotto720 and not lotto645:
-        print(f'🔍 본문(1500자):\n{body_text[:1500]}')
 
     return {'lotto645': lotto645, 'lotto720': lotto720}
 
