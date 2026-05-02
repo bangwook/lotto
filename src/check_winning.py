@@ -12,7 +12,6 @@ from os import environ
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
 from notify import send_645_winning, send_720_winning, send_error_notification
-import state as state_store
 
 
 def get_balance(page: Page) -> int:
@@ -512,15 +511,9 @@ def run(playwright: Playwright) -> None:
         if check_target in ('all', '645') and purchases['lotto645']:
             results_645 = []
             ledger_round = purchases['lotto645'][0].get('round', 0)
-            saved_numbers = state_store.load_645(ledger_round)
-            if saved_numbers:
-                print(f'📂 state 파일에서 645 번호 복원: {len(saved_numbers)}게임 (round={ledger_round})')
 
-            for idx, p in enumerate(purchases['lotto645']):
-                # state에 저장된 구조화된 번호 우선 사용 (ledger raw 텍스트는 파싱 불가)
-                numbers = p['numbers']
-                if not numbers and idx < len(saved_numbers):
-                    numbers = saved_numbers[idx]
+            for p in purchases['lotto645']:
+                numbers = p['numbers']  # 티켓 모달에서 추출됨
 
                 # 구매내역의 등수 우선, 미당첨/미추첨이면 직접 계산
                 rank = p.get('rank', '미당첨')
@@ -546,14 +539,9 @@ def run(playwright: Playwright) -> None:
         if check_target in ('all', '720') and purchases['lotto720']:
             results_720 = []
             ledger_round_720 = purchases['lotto720'][0].get('round', 0)
-            saved_720 = state_store.load_720(ledger_round_720)
-            saved_720_numbers = saved_720.get('numbers', []) if saved_720 else []
 
-            for idx, p in enumerate(purchases['lotto720']):
-                digits = p['digits']
-                # state에 저장된 자동번호가 있고 ledger의 digits가 비어있으면 보강
-                if not digits and idx < len(saved_720_numbers):
-                    digits = saved_720_numbers[idx]
+            for p in purchases['lotto720']:
+                digits = p['digits']  # ledger에서 "3조 068907" 형식 파싱됨
 
                 # 구매내역의 등수 우선, 없으면 계산
                 rank = p.get('rank', '미당첨')
