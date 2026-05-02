@@ -100,23 +100,17 @@ def _scrape_645_result_page(page: Page, draw_no: int) -> dict:
 
         result = page.evaluate(r"""
             () => {
-                // 회차 추출
                 let round = 0;
                 const text = document.body.innerText || '';
                 const roundM = text.match(/제\s*(\d{3,4})\s*회/);
                 if (roundM) round = parseInt(roundM[1]);
 
-                // 추첨일
                 let date = '';
                 const dateM = text.match(/(\d{4}[년.\-]\s*\d{1,2}[월.\-]\s*\d{1,2})/);
                 if (dateM) date = dateM[1];
 
-                // 당첨번호 6개 + 보너스 1개
-                const ballEls = document.querySelectorAll(
-                    '.win_result .num.win span, .win_result .ball_645, ' +
-                    '.num.win span[class*="ball"], span.ball_645, ' +
-                    '.win_result span[class*="ball"], #drwtNo span'
-                );
+                // 모든 ball 셀렉터 후보
+                const ballEls = document.querySelectorAll('span[class*="ball"]');
                 const balls = [];
                 ballEls.forEach(el => {
                     const n = parseInt((el.textContent || '').trim());
@@ -130,28 +124,26 @@ def _scrape_645_result_page(page: Page, draw_no: int) -> dict:
                     bonus = balls[6];
                 } else if (balls.length === 6) {
                     winning = balls;
-                    // 보너스 별도 추출
-                    const bonusEl = document.querySelector('.num.bonus span, #bnusNo, .bonus span[class*="ball"]');
-                    if (bonusEl) {
-                        const n = parseInt((bonusEl.textContent || '').trim());
-                        if (!isNaN(n)) bonus = n;
-                    }
                 }
 
-                // fallback: 모든 ball 셀렉터
+                // 텍스트 fallback: "당첨번호" 다음의 6개 + "보너스" 1개
                 if (winning.length < 6) {
-                    const allBalls = [];
-                    document.querySelectorAll('span[class*="ball"]').forEach(el => {
-                        const n = parseInt((el.textContent || '').trim());
-                        if (!isNaN(n) && n >= 1 && n <= 45) allBalls.push(n);
-                    });
-                    if (allBalls.length >= 6) {
-                        winning = allBalls.slice(0, 6);
-                        bonus = allBalls[6] || null;
+                    const cleanText = text.replace(/\s+/g, ' ');
+                    const winM = cleanText.match(/당첨번호[^\d]{0,20}(\d{1,2})\D+(\d{1,2})\D+(\d{1,2})\D+(\d{1,2})\D+(\d{1,2})\D+(\d{1,2})/);
+                    if (winM) {
+                        winning = [winM[1], winM[2], winM[3], winM[4], winM[5], winM[6]].map(Number);
                     }
+                    const bonusM = cleanText.match(/보너스[^\d]{0,20}(\d{1,2})/);
+                    if (bonusM) bonus = parseInt(bonusM[1]);
                 }
 
-                return { round, winning, bonus, date };
+                return {
+                    round, winning, bonus, date,
+                    pageUrl: location.href,
+                    title: document.title,
+                    ballCount: balls.length,
+                    bodyPreview: text.substring(0, 500),
+                };
             }
         """)
         if result and result.get('winning') and len(result['winning']) >= 6:
@@ -162,7 +154,11 @@ def _scrape_645_result_page(page: Page, draw_no: int) -> dict:
                 'bonus': int(result['bonus']) if result.get('bonus') else None,
                 'date': result.get('date', ''),
             }
-        print(f'  ↪ 645 결과 페이지에서 번호 추출 실패 ({draw_no}회)')
+        # 디버그: 페이지가 어떻게 보이는지
+        print(f'  ↪ 645 결과 페이지 추출 실패 ({draw_no}회)')
+        if result:
+            print(f'     URL: {result.get("pageUrl")} title: "{result.get("title")}"')
+            print(f'     ballCount={result.get("ballCount")}, body 미리보기: {result.get("bodyPreview", "")[:200]}')
         return None
     except Exception as e:
         print(f'  ↪ 645 결과 페이지 오류 ({draw_no}회): {e}')
@@ -441,46 +437,67 @@ def get_purchases(page: Page) -> dict:
     return {'lotto645': lotto645, 'lotto720': lotto720}
 
 
+def _detect_645_modal(page: Page) -> bool:
+    """티켓 모달이 열렸는지 감지."""
+    try:
+        return page.evaluate(r"""
+            () => {
+                const text = (document.body.innerText || '');
+                // A 자동/수동 + 6번호 패턴이 보이면 모달이 열린 것
+                if (/[A-J]\s*(?:자동|수동|반자동)\s+\d{1,2}/.test(text)) return true;
+                if (text.includes('티켓 보기') && text.includes('발행일')) return true;
+                const modalSels = ['[class*="modal"]', '[class*="popup"]', '[class*="layer"]', '[role="dialog"]'];
+                for (const sel of modalSels) {
+                    const els = document.querySelectorAll(sel);
+                    for (const el of els) {
+                        if (el.offsetParent !== null && (el.textContent || '').includes('티켓')) return true;
+                    }
+                }
+                return false;
+            }
+        """) or False
+    except Exception:
+        return False
+
+
 def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
     """ledger의 각 645 행 클릭 → 티켓 모달에서 번호 추출하여 entry['numbers'] 채움.
 
-    실제 ledger 행은 li.whl-row 클래스. 행 내 클릭 가능 요소를 모두 시도.
+    실제 ledger 행은 li.whl-row. clickable 자식이 없으면 행 자체 또는 자손 모두에
+    Playwright 실제 마우스 이벤트 발사 (JS .click()은 일부 이벤트만 트리거).
     """
     print(f'🔍 645 티켓 모달에서 번호 추출 시도 ({len(lotto645)}건)...')
 
+    # 행 식별 + 자식 디버그 (outerHTML 일부도)
     debug_info = page.evaluate(r"""
         () => {
-            // 알려진 ledger 행 셀렉터를 우선순위대로 시도
             const selectors = [
                 'li.whl-row', 'li[class*="whl-row"]',
-                'tr.whl-row', 'tr[class*="whl-row"]',
-                'li[class*="row"]:not([class*="header"]):not([class*="title"])',
-                'tr[class*="row"]:not([class*="header"]):not([class*="title"])',
+                'tr.whl-row', 'li[class*="row"]:not([class*="header"]):not([class*="title"])',
             ];
             let rows = [];
             let usedSel = '';
             for (const sel of selectors) {
-                rows = [...document.querySelectorAll(sel)].filter(r => {
-                    const t = (r.textContent || '');
-                    return t.includes('로또6/45');
-                });
+                rows = [...document.querySelectorAll(sel)].filter(r => (r.textContent || '').includes('로또6/45'));
                 if (rows.length > 0) { usedSel = sel; break; }
             }
 
-            // 각 행의 클릭 가능 요소 미리보기
-            const samples = rows.slice(0, 5).map(row => ({
-                tag: row.tagName,
-                cls: ((row.className || '') + '').substring(0, 60),
-                preview: (row.textContent || '').replace(/\s+/g, ' ').substring(0, 100),
-                clickables: [...row.querySelectorAll('a, button, [onclick], [role="button"], img, i')]
-                    .map(el => ({
-                        tag: el.tagName,
-                        cls: ((el.className || '') + '').substring(0, 50),
-                        text: (el.textContent || '').trim().substring(0, 30),
-                        onclick: (el.getAttribute('onclick') || '').substring(0, 80),
-                        title: el.getAttribute('title') || el.getAttribute('alt') || '',
-                    })).slice(0, 10),
-            }));
+            const samples = rows.slice(0, 3).map(row => {
+                const desc = [...row.querySelectorAll('*')].slice(0, 25).map(el => ({
+                    tag: el.tagName,
+                    cls: ((el.className || '') + '').substring(0, 50),
+                    text: (el.textContent || '').trim().substring(0, 30),
+                    onclick: (el.getAttribute('onclick') || '').substring(0, 50),
+                    cursor: getComputedStyle(el).cursor,
+                }));
+                return {
+                    tag: row.tagName,
+                    cls: ((row.className || '') + '').substring(0, 60),
+                    htmlPreview: (row.outerHTML || '').substring(0, 500),
+                    descCount: row.querySelectorAll('*').length,
+                    descendants: desc,
+                };
+            });
 
             window.__lotto645Rows = rows;
             return { count: rows.length, usedSel, samples };
@@ -488,79 +505,87 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
     """)
     print(f'  🔬 행 후보 {debug_info["count"]}개 (셀렉터: {debug_info.get("usedSel", "")})')
     for i, s in enumerate(debug_info.get('samples', [])):
-        print(f'    행 {i}: <{s["tag"]}.{s["cls"]}> "{s["preview"][:60]}"')
-        for cl in s.get('clickables', []):
-            print(f'      └ {cl["tag"]}.{cl["cls"]} text="{cl["text"]}" title="{cl.get("title", "")}" onclick="{cl["onclick"][:50]}"')
+        print(f'    행 {i}: <{s["tag"]}.{s["cls"]}> 자손 {s["descCount"]}개')
+        print(f'    행 {i} HTML 미리보기: {s["htmlPreview"][:300]}')
+        for d in s.get('descendants', [])[:15]:
+            cursor = d.get('cursor', '')
+            cur_marker = ' [cursor:pointer]' if cursor == 'pointer' else ''
+            print(f'      ▸ {d["tag"]}.{d["cls"]} text="{d["text"]}"{cur_marker}')
 
     for idx, entry in enumerate(lotto645):
         if entry.get('numbers'):
             continue
 
         opened = False
-        # 모든 클릭 가능 요소 순차 시도
-        max_clickables = page.evaluate(
-            "(idx) => (window.__lotto645Rows[idx]?.querySelectorAll('a, button, [onclick], [role=\"button\"], img').length || 0)",
-            idx,
-        )
-        click_targets = ['row_self'] + [f'clickable_{i}' for i in range(max_clickables)]
+        # Playwright의 li.whl-row 행 자체를 click 시도
+        try:
+            row_locator = page.locator('li.whl-row').nth(idx)
 
-        for strategy in click_targets:
-            try:
-                clicked = page.evaluate(
-                    """([targetIdx, strategy]) => {
-                        const rows = window.__lotto645Rows || [];
-                        if (targetIdx >= rows.length) return { ok: false, reason: 'index out of range' };
-                        const row = rows[targetIdx];
+            # 시도 1: 행 자체 (Playwright 실제 마우스 이벤트)
+            for trial_name, trial_fn in (
+                ('row.click', lambda: row_locator.click(force=True, timeout=3000)),
+                ('row.dblclick', lambda: row_locator.dblclick(force=True, timeout=3000)),
+                ('row hover+click', lambda: (row_locator.hover(timeout=2000), row_locator.click(force=True, timeout=3000))),
+            ):
+                try:
+                    trial_fn()
+                    time.sleep(1.2)
+                    if _detect_645_modal(page):
+                        print(f'  ✅ #{idx + 1} {trial_name} 으로 모달 열림')
+                        opened = True
+                        break
+                    else:
+                        print(f'  ⚠️ #{idx + 1} {trial_name}: 모달 미감지')
+                except Exception as e:
+                    print(f'  ⚠️ #{idx + 1} {trial_name} 실패: {e}')
 
-                        let target = null;
-                        if (strategy === 'row_self') {
-                            target = row;
-                        } else if (strategy.startsWith('clickable_')) {
-                            const i = parseInt(strategy.split('_')[1]);
-                            const all = row.querySelectorAll('a, button, [onclick], [role="button"], img');
-                            target = all[i];
-                        }
-
-                        if (!target) return { ok: false, reason: 'target not found' };
-                        try {
-                            target.click();
-                            return { ok: true, target: target.tagName + '.' + ((target.className || '') + '').substring(0, 40) };
-                        } catch (e) {
-                            return { ok: false, reason: e.message };
-                        }
-                    }""",
-                    [idx, strategy],
-                )
-                if not isinstance(clicked, dict) or not clicked.get('ok'):
-                    continue
-
-                time.sleep(1.2)
-                modal_open = page.evaluate(r"""
-                    () => {
-                        const text = (document.body.innerText || '');
-                        if (text.includes('티켓 보기') || text.includes('Lotto6/45') || text.includes('자동\n')) {
-                            // 추가로 A 자동/수동 패턴이 있는지
-                            if (/[A-J]\s*(?:자동|수동|반자동)\s+\d{1,2}/.test(text)) return true;
-                        }
-                        const modalSels = ['[class*="modal"]', '[class*="popup"]', '[class*="layer"]', '[role="dialog"]'];
-                        for (const sel of modalSels) {
-                            const els = document.querySelectorAll(sel);
-                            for (const el of els) {
-                                if (el.offsetParent !== null && (el.textContent || '').includes('티켓')) return true;
+            # 시도 2: cursor:pointer 인 자손에 클릭
+            if not opened:
+                pointer_idx_list = page.evaluate(
+                    """(idx) => {
+                        const row = (window.__lotto645Rows || [])[idx];
+                        if (!row) return [];
+                        const all = [...row.querySelectorAll('*')];
+                        const result = [];
+                        all.forEach((el, i) => {
+                            if (getComputedStyle(el).cursor === 'pointer') {
+                                result.push({ i, tag: el.tagName, cls: ((el.className || '') + '').substring(0, 40) });
                             }
-                        }
-                        return false;
-                    }
-                """)
-                if modal_open:
-                    print(f'  ✅ #{idx + 1} {strategy} 클릭으로 모달 열림 ({clicked.get("target")})')
-                    opened = True
-                    break
-            except Exception as e:
-                print(f'  ⚠️ #{idx + 1} {strategy} 실패: {e}')
+                        });
+                        return result;
+                    }""",
+                    idx,
+                )
+                for p in pointer_idx_list:
+                    try:
+                        clicked = page.evaluate(
+                            """([rowIdx, descIdx]) => {
+                                const row = (window.__lotto645Rows || [])[rowIdx];
+                                if (!row) return false;
+                                const desc = row.querySelectorAll('*')[descIdx];
+                                if (!desc) return false;
+                                desc.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                                desc.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                                desc.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                                desc.click();
+                                return true;
+                            }""",
+                            [idx, p['i']],
+                        )
+                        if not clicked:
+                            continue
+                        time.sleep(1.2)
+                        if _detect_645_modal(page):
+                            print(f'  ✅ #{idx + 1} pointer descendant {p["tag"]}.{p["cls"]} 클릭으로 모달 열림')
+                            opened = True
+                            break
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f'  ⚠️ #{idx + 1} 행 locator 오류: {e}')
 
         if not opened:
-            print(f'  ❌ #{idx + 1}: 모달이 열리지 않음 (모든 클릭 가능 요소 시도)')
+            print(f'  ❌ #{idx + 1}: 모달이 열리지 않음')
             continue
 
         page.screenshot(path=f"debug_645_ticket_{idx}.png")
