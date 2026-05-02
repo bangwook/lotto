@@ -296,9 +296,12 @@ def run(playwright: Playwright) -> None:
         if purchases['lotto645']:
             results_645 = []
             for p in purchases['lotto645']:
-                rank = '미당첨'
-                if p['numbers']:
-                    rank = calc_645_rank(p['numbers'], win645['winning'], win645['bonus'])
+                # 구매내역의 등수 우선
+                rank = p.get('rank', '미당첨')
+                if rank in ('미당첨', '미추첨') and p['numbers'] and win645['winning']:
+                    calc_rank = calc_645_rank(p['numbers'], win645['winning'], win645['bonus'])
+                    if calc_rank != '미당첨':
+                        rank = calc_rank
                 results_645.append({
                     'numbers': p['numbers'],
                     'raw_numbers': p.get('raw_numbers', ''),
@@ -317,14 +320,19 @@ def run(playwright: Playwright) -> None:
         if purchases['lotto720']:
             results_720 = []
             for p in purchases['lotto720']:
-                rank = calc_720_rank(p['group'], p['digits'], win720['group'], win720['winning'])
+                # 구매내역의 등수 우선, 없으면 계산
+                rank = p.get('rank', '미당첨')
+                if rank in ('미당첨', '미추첨'):
+                    calc_rank = calc_720_rank(p['group'], p['digits'], win720['group'], win720['winning'])
+                    if calc_rank != '미당첨':
+                        rank = calc_rank
                 results_720.append({
                     'group': p['group'],
                     'digits': p['digits'],
                     'rank': rank,
                 })
             send_720_winning(
-                round_no=win720['round'],
+                round_no=win720['round'] or purchases['lotto720'][0].get('round', 0),
                 win_group=win720['group'],
                 win_digits=win720['winning'],
                 my_games=results_720,
