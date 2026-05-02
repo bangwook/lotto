@@ -14,6 +14,7 @@ from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
 from lotto720 import buy_lotto720
 from notify import send_purchase_notification, send_error_notification, send_lotto645_notification, send_lotto720_notification
+import state as state_store
 
 # .env loading is handled by login module import
 
@@ -229,7 +230,7 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     page.screenshot(path="debug_after_purchase.png")
     print(f'📍 구매 후 URL: {page.url}')
 
-    numbers = page.evaluate("""
+    receipt = page.evaluate("""
         () => {
             const games = [];
             const seen = new Set();
@@ -296,9 +297,24 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
                 });
             }
 
-            return games;
+            // 회차 추출 (영수증 hidden input 또는 텍스트 "제 N 회")
+            let round = 0;
+            for (const sel of ['input[name="drwNo"]', 'input[name="DRW_NO"]', 'input[name="drawNo"]']) {
+                const el = document.querySelector(sel);
+                const v = el ? parseInt(el.value) : 0;
+                if (v) { round = v; break; }
+            }
+            if (!round) {
+                const text = document.body.innerText || '';
+                const m = text.match(/제\\s*(\\d{3,4})\\s*회/);
+                if (m) round = parseInt(m[1]);
+            }
+
+            return { games, round };
         }
-    """) or []
+    """) or {}
+    numbers = receipt.get('games', []) if isinstance(receipt, dict) else []
+    receipt_round = receipt.get('round', 0) if isinstance(receipt, dict) else 0
 
     if numbers and len(numbers) >= total_games:
         print(f'🎱 추출된 번호 ({len(numbers)}게임): {numbers}')
@@ -346,6 +362,31 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
                     return games.slice(0, {total_games});
                 }}
             """)
+            # ledger에서 645 최신 회차 추출 (state 저장에 필요)
+            if not receipt_round:
+                ledger_round = page.evaluate("""
+                    () => {
+                        const lines = (document.body.innerText || '').split('\\n').map(s => s.trim());
+                        for (let i = 0; i < lines.length; i++) {
+                            if (lines[i] === '로또6/45') {
+                                const r = parseInt(lines[i + 1]);
+                                if (r) return r;
+                            }
+                            if (lines[i].includes('로또6/45')) {
+                                // li.whl-row 형식: 회차 다음 줄에 숫자
+                                for (let j = i; j < Math.min(i + 8, lines.length); j++) {
+                                    if (lines[j] === '회차' && lines[j + 1]) {
+                                        const r = parseInt(lines[j + 1]);
+                                        if (r) return r;
+                                    }
+                                }
+                            }
+                        }
+                        return 0;
+                    }
+                """)
+                if ledger_round:
+                    receipt_round = ledger_round
             if ledger_numbers and len(ledger_numbers) > 0:
                 numbers = ledger_numbers
                 print(f'🎱 구매내역에서 추출 ({len(numbers)}게임): {numbers}')
@@ -371,6 +412,12 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
 
     if not numbers and manual_numbers:
         numbers = [list(game) for game in manual_numbers]
+
+    # state 저장 - check_winning에서 round 매칭으로 정확한 번호 복원
+    try:
+        state_store.save_645(receipt_round, numbers)
+    except Exception as e:
+        print(f'⚠️ state 저장 실패 (645): {e}')
 
     print(f'✅ Lotto 6/45: All {total_games} games purchased successfully!')
     return {'success': True, 'numbers': numbers, 'details': ''}

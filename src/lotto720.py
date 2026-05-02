@@ -9,6 +9,7 @@ import time
 from os import environ
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
+import state as state_store
 
 
 def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
@@ -286,6 +287,9 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     # 자동 생성된 번호 추출 (confirm 전)
     numbers = _extract_720_numbers(page, direct_mode)
 
+    # 회차 추출
+    round_no = _extract_720_round(page, direct_mode)
+
     # Confirm selection
     frame.locator(".lotto720_btn_confirm_number").click()
     time.sleep(2)
@@ -376,6 +380,13 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     page.screenshot(path="debug_720_after_purchase.png")
 
     print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
+
+    # state 저장 - 당첨 확인에서 자동번호 매칭에 사용
+    try:
+        state_store.save_720(round_no, groups, numbers)
+    except Exception as e:
+        print(f'⚠️ state 저장 실패 (720): {e}')
+
     return {'success': True, 'groups': groups, 'numbers': numbers, 'details': ''}
 
 
@@ -549,6 +560,33 @@ _PENSION_NUM_EXTRACT_JS = r"""
     return { games, debug };
 }
 """
+
+
+def _extract_720_round(page: Page, direct_mode: bool) -> int:
+    """720+ 게임 페이지에서 현재 구매 회차 추출."""
+    try:
+        round_no = page.evaluate(r"""
+            () => {
+                const findDoc = () => {
+                    const iframe = document.querySelector('#ifrm_tab');
+                    if (iframe && iframe.contentDocument) return iframe.contentDocument;
+                    return document;
+                };
+                const doc = findDoc();
+                for (const sel of ['input[name="drwNo"]', 'input[name="DRW_NO"]', 'input[name="drawNo"]']) {
+                    const el = doc.querySelector(sel);
+                    const v = el ? parseInt(el.value) : 0;
+                    if (v) return v;
+                }
+                const text = (doc.body && doc.body.innerText) || '';
+                const m = text.match(/제\s*(\d{2,4})\s*회/);
+                return m ? parseInt(m[1]) : 0;
+            }
+        """)
+        return int(round_no or 0)
+    except Exception as e:
+        print(f'⚠️ 720+ 회차 추출 실패: {e}')
+        return 0
 
 
 def _extract_720_numbers(page: Page, direct_mode: bool) -> list:

@@ -12,6 +12,7 @@ from os import environ
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
 from notify import send_645_winning, send_720_winning, send_error_notification
+import state as state_store
 
 
 def get_balance(page: Page) -> int:
@@ -450,291 +451,8 @@ def get_purchases(page: Page) -> dict:
     if lotto645:
         print(f'  645 샘플: {lotto645[0]}')
 
-    # 645 티켓 모달에서 정확한 번호 추출 (자릿수 패딩이 적용됨)
-    if lotto645:
-        _enrich_645_from_ticket_modals(page, lotto645)
-
     return {'lotto645': lotto645, 'lotto720': lotto720}
 
-
-def _detect_645_modal(page: Page) -> bool:
-    """티켓 모달이 열렸는지 감지. 실제 모달 컨텐츠 키워드만으로 판정."""
-    try:
-        return page.evaluate(r"""
-            () => {
-                const text = (document.body.innerText || '');
-                // 티켓 모달에만 존재하는 고유 키워드 조합
-                // (메뉴/필터에는 없는 단어)
-                if (text.includes('발행일') && text.includes('추첨일')) return true;
-                if (text.includes('지급기한')) return true;
-                if (text.includes('티켓 보기')) return true;
-                return false;
-            }
-        """) or False
-    except Exception:
-        return False
-
-
-def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
-    """ledger의 각 645 행 클릭 → 티켓 모달에서 번호 추출하여 entry['numbers'] 채움.
-
-    실제 ledger 행은 li.whl-row. clickable 자식이 없으면 행 자체 또는 자손 모두에
-    Playwright 실제 마우스 이벤트 발사 (JS .click()은 일부 이벤트만 트리거).
-    """
-    print(f'🔍 645 티켓 모달에서 번호 추출 시도 ({len(lotto645)}건)...')
-
-    # 행 식별 + 풀 자식 디버그
-    debug_info = page.evaluate(r"""
-        () => {
-            const selectors = [
-                'li.whl-row', 'li[class*="whl-row"]',
-                'tr.whl-row', 'li[class*="row"]:not([class*="header"]):not([class*="title"])',
-            ];
-            let rows = [];
-            let usedSel = '';
-            for (const sel of selectors) {
-                rows = [...document.querySelectorAll(sel)].filter(r => (r.textContent || '').includes('로또6/45'));
-                if (rows.length > 0) { usedSel = sel; break; }
-            }
-
-            const samples = rows.slice(0, 2).map(row => {
-                const allDesc = [...row.querySelectorAll('*')];
-                const descSummary = allDesc.map(el => ({
-                    tag: el.tagName,
-                    cls: ((el.className || '') + '').substring(0, 50),
-                    text: (el.textContent || '').trim().substring(0, 30),
-                    onclick: (el.getAttribute('onclick') || '').substring(0, 50),
-                    cursor: getComputedStyle(el).cursor,
-                    dataAttrs: [...el.attributes].filter(a => a.name.startsWith('data-')).map(a => `${a.name}=${a.value}`).join(' ').substring(0, 80),
-                }));
-
-                // 특수 태그 (img/svg/button/a/i) 추출
-                const special = [...row.querySelectorAll('img, svg, button, a, i, [data-action], [data-target], [data-toggle]')]
-                    .map(el => ({
-                        tag: el.tagName,
-                        cls: ((el.className || '') + '').substring(0, 50),
-                        text: (el.textContent || '').trim().substring(0, 30),
-                        outer: (el.outerHTML || '').substring(0, 200),
-                    }));
-
-                return {
-                    tag: row.tagName,
-                    cls: ((row.className || '') + '').substring(0, 60),
-                    htmlFull: (row.outerHTML || '').substring(0, 3000),
-                    descCount: allDesc.length,
-                    descendants: descSummary,
-                    special,
-                };
-            });
-
-            window.__lotto645Rows = rows;
-            return { count: rows.length, usedSel, samples };
-        }
-    """)
-    print(f'  🔬 행 후보 {debug_info["count"]}개 (셀렉터: {debug_info.get("usedSel", "")})')
-    for i, s in enumerate(debug_info.get('samples', [])):
-        print(f'    행 {i}: <{s["tag"]}.{s["cls"]}> 자손 {s["descCount"]}개')
-        print(f'    행 {i} 풀 HTML: {s["htmlFull"]}')
-        print(f'    행 {i} 자손 전체:')
-        for d in s.get('descendants', []):
-            cursor = d.get('cursor', '')
-            cur_marker = ' [pointer]' if cursor == 'pointer' else ''
-            data = f' data="{d["dataAttrs"]}"' if d.get('dataAttrs') else ''
-            print(f'      ▸ {d["tag"]}.{d["cls"]} text="{d["text"]}"{cur_marker}{data}')
-        print(f'    행 {i} 특수 태그 (img/svg/button/a/i/data-*): {len(s.get("special", []))}개')
-        for sp in s.get('special', []):
-            print(f'      ✦ {sp["tag"]}.{sp["cls"]} text="{sp["text"]}"')
-            print(f'        outer: {sp["outer"]}')
-
-    for idx, entry in enumerate(lotto645):
-        if entry.get('numbers'):
-            continue
-
-        opened = False
-        # Playwright mouse click (실제 좌표) + 네트워크 응답 캡처
-        try:
-            barcd_locator = page.locator('li.whl-row').nth(idx).locator('span.whl-txt.barcd')
-
-            # 클릭 시 발생하는 네트워크 응답 캡처
-            captured_responses = []
-
-            def _on_response(response):
-                try:
-                    url = response.url.lower()
-                    # mypage 도메인의 ajax 응답만 수집
-                    if 'dhlottery.co.kr' in url and any(
-                        k in url for k in ('ticket', 'detail', 'order', 'pdraw', 'mylotto', 'gameresult', 'mypage')
-                    ):
-                        captured_responses.append({
-                            'url': response.url,
-                            'status': response.status,
-                            'ct': response.headers.get('content-type', ''),
-                        })
-                except Exception:
-                    pass
-
-            page.on('response', _on_response)
-
-            try:
-                # 실제 마우스 좌표 클릭 (가장 사실적인 이벤트 시퀀스)
-                box = barcd_locator.bounding_box(timeout=3000)
-                if box:
-                    cx = box['x'] + box['width'] / 2
-                    cy = box['y'] + box['height'] / 2
-                    page.mouse.move(cx, cy)
-                    time.sleep(0.2)
-                    page.mouse.down()
-                    time.sleep(0.05)
-                    page.mouse.up()
-                    print(f'  🖱️  #{idx + 1} mouse click @ ({cx:.0f}, {cy:.0f})')
-                else:
-                    print(f'  ⚠️ #{idx + 1} bounding box 못 얻음')
-            except Exception as e:
-                print(f'  ⚠️ #{idx + 1} mouse click 실패: {e}')
-
-            time.sleep(3)  # 모달 비동기 로딩 대기
-
-            page.remove_listener('response', _on_response)
-
-            print(f'  📡 #{idx + 1} 캡처된 ajax 응답 {len(captured_responses)}개')
-            for r in captured_responses[:8]:
-                print(f'     {r["status"]} {r["ct"]} {r["url"]}')
-
-            page.screenshot(path=f"debug_645_after_click_{idx}.png")
-
-            if _detect_645_modal(page):
-                opened = True
-                print(f'  ✅ #{idx + 1} 모달 열림 감지')
-            else:
-                print(f'  ❌ #{idx + 1} 모달 미감지 - 클릭 핸들러가 자동화 환경에서 동작 안 함')
-        except Exception as e:
-            print(f'  ⚠️ #{idx + 1} 처리 중 오류: {e}')
-
-        if not opened:
-            continue
-
-        page.screenshot(path=f"debug_645_ticket_{idx}.png")
-
-        extract_result = page.evaluate(r"""
-            () => {
-                const games = [];
-                const seen = new Set();
-                const addGame = (nums) => {
-                    if (nums.length < 6) return;
-                    const game = nums.slice(0, 6);
-                    const key = game.join(',');
-                    if (seen.has(key)) return;
-                    seen.add(key);
-                    games.push(game);
-                };
-
-                // 1) 단일 라인: "A 자동 N N N N N N"
-                const fullText = document.body.innerText || '';
-                const lines = fullText.split('\n');
-                for (const ln of lines) {
-                    const m = ln.trim().match(/^([A-J])\s*(?:자동|수동|반자동)\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})/);
-                    if (m) {
-                        const nums = [m[2], m[3], m[4], m[5], m[6], m[7]].map(Number);
-                        if (nums.every(n => n >= 1 && n <= 45) && new Set(nums).size === 6) addGame(nums);
-                    }
-                }
-
-                // 2) 멀티라인: 각 게임이 여러 줄로 분리된 경우 (A\n자동\n5\n17\n25\n...)
-                if (games.length === 0) {
-                    for (let i = 0; i < lines.length - 12; i++) {
-                        const lab = lines[i].trim();
-                        if (!/^[A-J]$/.test(lab)) continue;
-                        // 다음 1~3줄 안에 자동/수동/반자동
-                        let mode = '';
-                        let startIdx = -1;
-                        for (let j = 1; j <= 3 && i + j < lines.length; j++) {
-                            const t = lines[i + j].trim();
-                            if (/^(자동|수동|반자동)$/.test(t)) {
-                                mode = t;
-                                startIdx = i + j + 1;
-                                break;
-                            }
-                        }
-                        if (!mode) continue;
-                        // 다음 6줄에서 숫자 추출
-                        const nums = [];
-                        for (let j = startIdx; j < startIdx + 12 && nums.length < 6; j++) {
-                            const t = (lines[j] || '').trim();
-                            const n = parseInt(t);
-                            if (!isNaN(n) && n >= 1 && n <= 45 && /^\d+$/.test(t)) nums.push(n);
-                        }
-                        if (nums.length === 6 && new Set(nums).size === 6) addGame(nums);
-                    }
-                }
-
-                // 3) DOM 기반: ball 셀렉터
-                if (games.length === 0) {
-                    document.querySelectorAll('tr, li, .game, .game_row, [class*="num"]').forEach(row => {
-                        const nums = [];
-                        row.querySelectorAll('span[class*="ball"]').forEach(el => {
-                            const n = parseInt((el.textContent || '').trim());
-                            if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
-                        });
-                        if (nums.length >= 6 && nums.length <= 8) addGame(nums);
-                    });
-                }
-
-                // 4) 일반 셀렉터: 모달 영역 안에서 1-45 숫자 6개씩 묶기
-                if (games.length === 0) {
-                    const modalArea = document.querySelector('[class*="modal"]:not([style*="display: none"]), [class*="popup"]:not([style*="display: none"]), [class*="layer"]:not([style*="display: none"])') || document.body;
-                    let cur = [];
-                    modalArea.querySelectorAll('span, td, li, div').forEach(el => {
-                        if (el.children.length > 0) return; // leaf only
-                        const t = (el.textContent || '').trim();
-                        if (/^\d{1,2}$/.test(t)) {
-                            const n = parseInt(t);
-                            if (n >= 1 && n <= 45) {
-                                cur.push(n);
-                                if (cur.length === 6) {
-                                    if (new Set(cur).size === 6) addGame(cur);
-                                    cur = [];
-                                }
-                            }
-                        }
-                    });
-                }
-
-                // 디버그: 모달 텍스트 미리보기
-                return {
-                    games,
-                    bodyPreview: fullText.substring(0, 600),
-                };
-            }
-        """)
-
-        numbers = extract_result.get('games', []) if isinstance(extract_result, dict) else []
-        if numbers:
-            entry['numbers'] = numbers
-            print(f'  ✅ #{idx + 1}: {len(numbers)}게임 추출 - {numbers}')
-        else:
-            print(f'  ⚠️ #{idx + 1}: 모달은 열렸으나 번호 추출 실패')
-            preview = extract_result.get('bodyPreview', '') if isinstance(extract_result, dict) else ''
-            print(f'     모달 텍스트 미리보기: {preview[:400]}')
-
-        # 모달 닫기
-        closed = False
-        for sel in ('.btn_close', '.close', '.modal_close', '[aria-label="close"]',
-                    '[aria-label="닫기"]', 'button[title="닫기"]', '.pop_close',
-                    'button:has-text("닫기")', 'a:has-text("닫기")'):
-            try:
-                btn = page.locator(sel).first
-                if btn.is_visible(timeout=500):
-                    btn.click(force=True, timeout=2000)
-                    closed = True
-                    break
-            except Exception:
-                continue
-        if not closed:
-            try:
-                page.keyboard.press('Escape')
-            except Exception:
-                pass
-        time.sleep(0.5)
 
 
 def run(playwright: Playwright) -> None:
@@ -797,11 +515,18 @@ def run(playwright: Playwright) -> None:
         if check_target in ('all', '645') and purchases['lotto645']:
             results_645 = []
             ledger_round = purchases['lotto645'][0].get('round', 0)
+            saved_numbers = state_store.load_645(ledger_round)
+            if saved_numbers:
+                print(f'📂 state에서 645 번호 복원: {len(saved_numbers)}게임 (round={ledger_round})')
+            else:
+                print(f'⚠️ state에 645 round={ledger_round} 데이터 없음 - raw 텍스트로 표시')
 
-            for p in purchases['lotto645']:
-                numbers = p['numbers']  # 티켓 모달에서 추출됨
+            for idx, p in enumerate(purchases['lotto645']):
+                # state 우선 사용 (ledger raw 텍스트는 자릿수 패딩 없는 발권 코드)
+                numbers = p['numbers']
+                if not numbers and idx < len(saved_numbers):
+                    numbers = saved_numbers[idx]
 
-                # 구매내역의 등수 우선, 미당첨/미추첨이면 직접 계산
                 rank = p.get('rank', '미당첨')
                 if rank in ('미당첨', '미추첨') and numbers and win645['winning']:
                     calc_rank = calc_645_rank(numbers, win645['winning'], win645['bonus'])
@@ -825,9 +550,13 @@ def run(playwright: Playwright) -> None:
         if check_target in ('all', '720') and purchases['lotto720']:
             results_720 = []
             ledger_round_720 = purchases['lotto720'][0].get('round', 0)
+            saved_720 = state_store.load_720(ledger_round_720)
+            saved_720_numbers = saved_720.get('numbers', []) if saved_720 else []
 
-            for p in purchases['lotto720']:
-                digits = p['digits']  # ledger에서 "3조 068907" 형식 파싱됨
+            for idx, p in enumerate(purchases['lotto720']):
+                digits = p['digits']
+                if not digits and idx < len(saved_720_numbers):
+                    digits = saved_720_numbers[idx]
 
                 # 구매내역의 등수 우선, 없으면 계산
                 rank = p.get('rank', '미당첨')
