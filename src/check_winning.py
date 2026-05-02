@@ -333,7 +333,123 @@ def get_purchases(page: Page) -> dict:
     if lotto645:
         print(f'  645 샘플: {lotto645[0]}')
 
+    # 645 티켓 모달에서 정확한 번호 추출 (자릿수 패딩이 적용됨)
+    if lotto645:
+        _enrich_645_from_ticket_modals(page, lotto645)
+
     return {'lotto645': lotto645, 'lotto720': lotto720}
+
+
+def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
+    """ledger의 각 645 항목 클릭 → 티켓 보기 모달에서 번호 추출하여 entry['numbers'] 채움.
+
+    raw 텍스트("63045 06832 ...")는 자릿수 패딩 없는 발권 코드이며, 실제 번호는
+    모달의 "A 자동 5 17 25 33 35 36" 행에 패딩되어 표시된다.
+    """
+    print(f'🔍 645 티켓 모달에서 번호 추출 시도 ({len(lotto645)}건)...')
+
+    for idx, entry in enumerate(lotto645):
+        if entry.get('numbers'):
+            continue
+        try:
+            # idx번째 645 행의 클릭 가능 요소 찾기
+            opened = page.evaluate(f"""
+                (idx) => {{
+                    let count = 0;
+                    const lines = document.querySelectorAll('tr, li, div');
+                    for (const el of lines) {{
+                        const t = (el.textContent || '').trim();
+                        if (!t.startsWith('로또6/45')) continue;
+                        if (count === idx) {{
+                            // 클릭 트리거 후보: 자기 자신 또는 자식 a/button
+                            const trigger = el.querySelector('a, button, [onclick]') || el;
+                            trigger.click();
+                            return true;
+                        }}
+                        count++;
+                    }}
+                    return false;
+                }}
+            """, idx)
+            if not opened:
+                print(f'  ⚠️ #{idx + 1} 클릭 트리거 못 찾음')
+                continue
+
+            time.sleep(1.2)  # 모달 애니메이션
+            page.screenshot(path=f"debug_645_ticket_{idx}.png")
+
+            numbers = page.evaluate(r"""
+                () => {
+                    const games = [];
+                    const seen = new Set();
+                    const addGame = (nums) => {
+                        if (nums.length < 6) return;
+                        const game = nums.slice(0, 6);
+                        const key = game.join(',');
+                        if (seen.has(key)) return;
+                        seen.add(key);
+                        games.push(game);
+                    };
+
+                    // 1) 텍스트 패턴: "A 자동/수동/반자동 N N N N N N"
+                    const lines = (document.body.innerText || '').split('\n');
+                    for (const ln of lines) {
+                        const m = ln.trim().match(/^([A-J])\s*(?:자동|수동|반자동)\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})/);
+                        if (m) {
+                            const nums = [m[2], m[3], m[4], m[5], m[6], m[7]].map(Number);
+                            if (nums.every(n => n >= 1 && n <= 45) && new Set(nums).size === 6) {
+                                addGame(nums);
+                            }
+                        }
+                    }
+
+                    // 2) ball 셀렉터 (DOM 기반)
+                    if (games.length === 0) {
+                        document.querySelectorAll('tr, li, .game, .game_row, [class*="num"]').forEach(row => {
+                            const nums = [];
+                            row.querySelectorAll('span[class*="ball"]').forEach(el => {
+                                const n = parseInt((el.textContent || '').trim());
+                                if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
+                            });
+                            if (nums.length >= 6 && nums.length <= 8) addGame(nums);
+                        });
+                    }
+
+                    return games;
+                }
+            """)
+
+            if numbers:
+                entry['numbers'] = numbers
+                print(f'  ✅ #{idx + 1}: {len(numbers)}게임 추출 - {numbers}')
+            else:
+                print(f'  ⚠️ #{idx + 1}: 모달에서 번호 추출 실패')
+
+            # 모달 닫기
+            closed = False
+            for sel in ('.btn_close', '.close', '.modal_close', '[aria-label="close"]',
+                        '[aria-label="닫기"]', 'button[title="닫기"]', '.pop_close'):
+                try:
+                    btn = page.locator(sel).first
+                    if btn.is_visible(timeout=500):
+                        btn.click(force=True, timeout=2000)
+                        closed = True
+                        break
+                except Exception:
+                    continue
+            if not closed:
+                try:
+                    page.keyboard.press('Escape')
+                except Exception:
+                    pass
+            time.sleep(0.5)
+        except Exception as e:
+            print(f'  ⚠️ #{idx + 1} 처리 중 오류: {e}')
+            try:
+                page.keyboard.press('Escape')
+            except Exception:
+                pass
+            time.sleep(0.5)
 
 
 def run(playwright: Playwright) -> None:
