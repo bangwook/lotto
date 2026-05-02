@@ -551,80 +551,66 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
             continue
 
         opened = False
-        # Playwright의 li.whl-row 행 자체를 click 시도
+        # Playwright mouse click (실제 좌표) + 네트워크 응답 캡처
         try:
-            row_locator = page.locator('li.whl-row').nth(idx)
-            url_before = page.url
+            barcd_locator = page.locator('li.whl-row').nth(idx).locator('span.whl-txt.barcd')
 
-            # 시도 1: 행 자체 (Playwright 실제 마우스 이벤트)
-            for trial_name, trial_fn in (
-                ('row.click', lambda: row_locator.click(force=True, timeout=3000)),
-                ('row.dblclick', lambda: row_locator.dblclick(force=True, timeout=3000)),
-                ('row hover+click', lambda: (row_locator.hover(timeout=2000), row_locator.click(force=True, timeout=3000))),
-            ):
+            # 클릭 시 발생하는 네트워크 응답 캡처
+            captured_responses = []
+
+            def _on_response(response):
                 try:
-                    trial_fn()
-                    time.sleep(1.2)
-                    url_after = page.url
-                    if url_after != url_before:
-                        print(f'  📍 #{idx + 1} {trial_name}: URL 변경 {url_before} → {url_after}')
-                        url_before = url_after
-                    if _detect_645_modal(page):
-                        print(f'  ✅ #{idx + 1} {trial_name} 으로 모달 열림')
-                        opened = True
-                        break
-                    else:
-                        print(f'  ⚠️ #{idx + 1} {trial_name}: 모달 미감지')
-                except Exception as e:
-                    print(f'  ⚠️ #{idx + 1} {trial_name} 실패: {e}')
+                    url = response.url.lower()
+                    # mypage 도메인의 ajax 응답만 수집
+                    if 'dhlottery.co.kr' in url and any(
+                        k in url for k in ('ticket', 'detail', 'order', 'pdraw', 'mylotto', 'gameresult', 'mypage')
+                    ):
+                        captured_responses.append({
+                            'url': response.url,
+                            'status': response.status,
+                            'ct': response.headers.get('content-type', ''),
+                        })
+                except Exception:
+                    pass
 
-            # 시도 2: cursor:pointer 인 자손에 클릭
-            if not opened:
-                pointer_idx_list = page.evaluate(
-                    """(idx) => {
-                        const row = (window.__lotto645Rows || [])[idx];
-                        if (!row) return [];
-                        const all = [...row.querySelectorAll('*')];
-                        const result = [];
-                        all.forEach((el, i) => {
-                            if (getComputedStyle(el).cursor === 'pointer') {
-                                result.push({ i, tag: el.tagName, cls: ((el.className || '') + '').substring(0, 40) });
-                            }
-                        });
-                        return result;
-                    }""",
-                    idx,
-                )
-                for p in pointer_idx_list:
-                    try:
-                        clicked = page.evaluate(
-                            """([rowIdx, descIdx]) => {
-                                const row = (window.__lotto645Rows || [])[rowIdx];
-                                if (!row) return false;
-                                const desc = row.querySelectorAll('*')[descIdx];
-                                if (!desc) return false;
-                                desc.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-                                desc.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-                                desc.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-                                desc.click();
-                                return true;
-                            }""",
-                            [idx, p['i']],
-                        )
-                        if not clicked:
-                            continue
-                        time.sleep(1.2)
-                        if _detect_645_modal(page):
-                            print(f'  ✅ #{idx + 1} pointer descendant {p["tag"]}.{p["cls"]} 클릭으로 모달 열림')
-                            opened = True
-                            break
-                    except Exception:
-                        continue
+            page.on('response', _on_response)
+
+            try:
+                # 실제 마우스 좌표 클릭 (가장 사실적인 이벤트 시퀀스)
+                box = barcd_locator.bounding_box(timeout=3000)
+                if box:
+                    cx = box['x'] + box['width'] / 2
+                    cy = box['y'] + box['height'] / 2
+                    page.mouse.move(cx, cy)
+                    time.sleep(0.2)
+                    page.mouse.down()
+                    time.sleep(0.05)
+                    page.mouse.up()
+                    print(f'  🖱️  #{idx + 1} mouse click @ ({cx:.0f}, {cy:.0f})')
+                else:
+                    print(f'  ⚠️ #{idx + 1} bounding box 못 얻음')
+            except Exception as e:
+                print(f'  ⚠️ #{idx + 1} mouse click 실패: {e}')
+
+            time.sleep(3)  # 모달 비동기 로딩 대기
+
+            page.remove_listener('response', _on_response)
+
+            print(f'  📡 #{idx + 1} 캡처된 ajax 응답 {len(captured_responses)}개')
+            for r in captured_responses[:8]:
+                print(f'     {r["status"]} {r["ct"]} {r["url"]}')
+
+            page.screenshot(path=f"debug_645_after_click_{idx}.png")
+
+            if _detect_645_modal(page):
+                opened = True
+                print(f'  ✅ #{idx + 1} 모달 열림 감지')
+            else:
+                print(f'  ❌ #{idx + 1} 모달 미감지 - 클릭 핸들러가 자동화 환경에서 동작 안 함')
         except Exception as e:
-            print(f'  ⚠️ #{idx + 1} 행 locator 오류: {e}')
+            print(f'  ⚠️ #{idx + 1} 처리 중 오류: {e}')
 
         if not opened:
-            print(f'  ❌ #{idx + 1}: 모달이 열리지 않음')
             continue
 
         page.screenshot(path=f"debug_645_ticket_{idx}.png")
