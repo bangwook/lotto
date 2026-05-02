@@ -87,8 +87,24 @@ def _fetch_645_api(page: Page, draw_no: int) -> dict:
 
 
 def _scrape_645_result_page(page: Page, draw_no: int) -> dict:
-    """결과 페이지 DOM에서 당첨번호 스크래핑."""
-    url = f"https://www.dhlottery.co.kr/gameResult.do?method=byWin&drwNo={draw_no}"
+    """결과 페이지 DOM에서 당첨번호 스크래핑. 여러 URL 패턴 시도."""
+    urls_to_try = [
+        f"https://www.dhlottery.co.kr/gameResult.do?method=byWin&drwNo={draw_no}",
+        # drwNo 없이 → 최신 발표 회차로 이동
+        "https://www.dhlottery.co.kr/gameResult.do?method=byWin",
+        # 대체 URL
+        f"https://dhlottery.co.kr/gameResult.do?method=byWin&drwNo={draw_no}",
+        f"https://www.dhlottery.co.kr/lotto/result.do?drwNo={draw_no}",
+    ]
+
+    for url in urls_to_try:
+        result = _try_scrape_645(page, url, draw_no)
+        if result:
+            return result
+    return None
+
+
+def _try_scrape_645(page: Page, url: str, draw_no: int) -> dict:
     try:
         page.goto(url, timeout=30000, wait_until="domcontentloaded")
         try:
@@ -96,6 +112,10 @@ def _scrape_645_result_page(page: Page, draw_no: int) -> dict:
         except Exception:
             pass
         time.sleep(1)
+        # errorPage로 리다이렉트되면 즉시 스킵
+        if 'errorPage' in page.url or 'error' in page.url.lower():
+            print(f'  ↪ 645 결과 페이지 오류 리다이렉트 ({url})')
+            return None
         page.screenshot(path=f"debug_645_result_{draw_no}.png")
 
         result = page.evaluate(r"""
@@ -590,7 +610,7 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
 
         page.screenshot(path=f"debug_645_ticket_{idx}.png")
 
-        numbers = page.evaluate(r"""
+        extract_result = page.evaluate(r"""
             () => {
                 const games = [];
                 const seen = new Set();
@@ -603,19 +623,46 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
                     games.push(game);
                 };
 
-                // 1) 텍스트 패턴: "A 자동/수동/반자동 N N N N N N"
-                const lines = (document.body.innerText || '').split('\n');
+                // 1) 단일 라인: "A 자동 N N N N N N"
+                const fullText = document.body.innerText || '';
+                const lines = fullText.split('\n');
                 for (const ln of lines) {
                     const m = ln.trim().match(/^([A-J])\s*(?:자동|수동|반자동)\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})/);
                     if (m) {
                         const nums = [m[2], m[3], m[4], m[5], m[6], m[7]].map(Number);
-                        if (nums.every(n => n >= 1 && n <= 45) && new Set(nums).size === 6) {
-                            addGame(nums);
-                        }
+                        if (nums.every(n => n >= 1 && n <= 45) && new Set(nums).size === 6) addGame(nums);
                     }
                 }
 
-                // 2) ball 셀렉터 (DOM 기반)
+                // 2) 멀티라인: 각 게임이 여러 줄로 분리된 경우 (A\n자동\n5\n17\n25\n...)
+                if (games.length === 0) {
+                    for (let i = 0; i < lines.length - 12; i++) {
+                        const lab = lines[i].trim();
+                        if (!/^[A-J]$/.test(lab)) continue;
+                        // 다음 1~3줄 안에 자동/수동/반자동
+                        let mode = '';
+                        let startIdx = -1;
+                        for (let j = 1; j <= 3 && i + j < lines.length; j++) {
+                            const t = lines[i + j].trim();
+                            if (/^(자동|수동|반자동)$/.test(t)) {
+                                mode = t;
+                                startIdx = i + j + 1;
+                                break;
+                            }
+                        }
+                        if (!mode) continue;
+                        // 다음 6줄에서 숫자 추출
+                        const nums = [];
+                        for (let j = startIdx; j < startIdx + 12 && nums.length < 6; j++) {
+                            const t = (lines[j] || '').trim();
+                            const n = parseInt(t);
+                            if (!isNaN(n) && n >= 1 && n <= 45 && /^\d+$/.test(t)) nums.push(n);
+                        }
+                        if (nums.length === 6 && new Set(nums).size === 6) addGame(nums);
+                    }
+                }
+
+                // 3) DOM 기반: ball 셀렉터
                 if (games.length === 0) {
                     document.querySelectorAll('tr, li, .game, .game_row, [class*="num"]').forEach(row => {
                         const nums = [];
@@ -627,15 +674,42 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
                     });
                 }
 
-                return games;
+                // 4) 일반 셀렉터: 모달 영역 안에서 1-45 숫자 6개씩 묶기
+                if (games.length === 0) {
+                    const modalArea = document.querySelector('[class*="modal"]:not([style*="display: none"]), [class*="popup"]:not([style*="display: none"]), [class*="layer"]:not([style*="display: none"])') || document.body;
+                    let cur = [];
+                    modalArea.querySelectorAll('span, td, li, div').forEach(el => {
+                        if (el.children.length > 0) return; // leaf only
+                        const t = (el.textContent || '').trim();
+                        if (/^\d{1,2}$/.test(t)) {
+                            const n = parseInt(t);
+                            if (n >= 1 && n <= 45) {
+                                cur.push(n);
+                                if (cur.length === 6) {
+                                    if (new Set(cur).size === 6) addGame(cur);
+                                    cur = [];
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // 디버그: 모달 텍스트 미리보기
+                return {
+                    games,
+                    bodyPreview: fullText.substring(0, 600),
+                };
             }
         """)
 
+        numbers = extract_result.get('games', []) if isinstance(extract_result, dict) else []
         if numbers:
             entry['numbers'] = numbers
             print(f'  ✅ #{idx + 1}: {len(numbers)}게임 추출 - {numbers}')
         else:
             print(f'  ⚠️ #{idx + 1}: 모달은 열렸으나 번호 추출 실패')
+            preview = extract_result.get('bodyPreview', '') if isinstance(extract_result, dict) else ''
+            print(f'     모달 텍스트 미리보기: {preview[:400]}')
 
         # 모달 닫기
         closed = False
