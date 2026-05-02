@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
 당첨 확인 스크립트 - 최근 구매 내역의 당첨 결과를 확인하고 Telegram 알림 전송
+- 645: 1~5등 당첨번호 + 내번호 + 당첨등수
+- 720+: 당첨번호 + 내번호 + 당첨등수
 """
 import re
 import time
+import urllib.request
+import json as jsonlib
 from os import environ
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
-from notify import send_winning_notification, send_error_notification
+from notify import send_645_winning, send_720_winning, send_error_notification
 
 
 def get_balance(page: Page) -> int:
@@ -19,75 +23,200 @@ def get_balance(page: Page) -> int:
     return int(re.sub(r'[^0-9]', '', deposit_text))
 
 
-def check_winning(page: Page) -> list:
-    """최근 구매 내역의 당첨 결과를 확인합니다."""
+def get_645_winning_numbers(page: Page) -> dict:
+    """645 최근 회차 당첨번호 조회 (1~5등)"""
+    try:
+        # 동행복권 645 결과 조회 페이지
+        page.goto(
+            "https://www.dhlottery.co.kr/gameResult.do?method=byWin",
+            timeout=30000, wait_until="networkidle",
+        )
+        time.sleep(1)
+        page.screenshot(path="debug_645_winning.png")
+
+        result = page.evaluate("""
+            () => {
+                // 회차
+                const round_el = document.querySelector('.win_result strong, .num_box strong, h4 strong');
+                const round_text = round_el ? round_el.textContent.trim() : '';
+                const round_match = round_text.match(/(\\d+)/);
+                const round = round_match ? parseInt(round_match[1]) : 0;
+
+                // 1등 6자리 + 보너스
+                const balls = [];
+                document.querySelectorAll('.win_result .num span, .nums .ball, .num.win span, span[class*="ball"]').forEach(el => {
+                    const n = parseInt(el.textContent.trim());
+                    if (!isNaN(n) && n >= 1 && n <= 45) balls.push(n);
+                });
+
+                // 1등 번호 6개, 보너스 1개
+                const winning = balls.slice(0, 6);
+                const bonus = balls[6] || null;
+
+                return { round, winning, bonus };
+            }
+        """)
+        return result
+    except Exception as e:
+        print(f'⚠️ 645 당첨번호 조회 실패: {e}')
+        return {'round': 0, 'winning': [], 'bonus': None}
+
+
+def calc_645_rank(my_numbers: list, winning: list, bonus: int) -> str:
+    """645 등수 계산"""
+    if not winning or len(winning) < 6:
+        return '미당첨'
+    matches = sum(1 for n in my_numbers if n in winning)
+    has_bonus = bonus in my_numbers if bonus else False
+
+    if matches == 6:
+        return '1'
+    elif matches == 5 and has_bonus:
+        return '2'
+    elif matches == 5:
+        return '3'
+    elif matches == 4:
+        return '4'
+    elif matches == 3:
+        return '5'
+    return '미당첨'
+
+
+def get_720_winning_numbers(page: Page) -> dict:
+    """720+ 최근 회차 당첨번호 조회"""
+    try:
+        page.goto(
+            "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72",
+            timeout=30000, wait_until="networkidle",
+        )
+        time.sleep(2)
+        page.screenshot(path="debug_720_winning.png")
+
+        # iframe 내부에서 추출
+        result = page.evaluate("""
+            () => {
+                const iframe = document.querySelector('#ifrm_tab');
+                const doc = iframe?.contentDocument || document;
+
+                // 회차
+                let round = 0;
+                doc.querySelectorAll('strong, h4, h3, .round').forEach(el => {
+                    const m = el.textContent.match(/제\\s*(\\d+)\\s*회/);
+                    if (m && !round) round = parseInt(m[1]);
+                });
+
+                // 1등 당첨번호: 조 + 6자리
+                // 2등 보너스: 6자리
+                const text = doc.body.innerText;
+                const lines = text.split('\\n').map(s => s.trim()).filter(Boolean);
+
+                let group = '';
+                const winning = [];
+                const bonus = [];
+
+                // "N조" 다음에 6개 숫자 (1등)
+                for (let i = 0; i < lines.length; i++) {
+                    const m = lines[i].match(/^(\\d)$/);
+                    if (m && lines[i-1] === '조') {
+                        group = m[1];
+                        for (let j = i + 1; j < Math.min(i + 7, lines.length); j++) {
+                            const n = parseInt(lines[j]);
+                            if (!isNaN(n) && n >= 0 && n <= 9) winning.push(n);
+                            else break;
+                        }
+                        break;
+                    }
+                }
+
+                return { round, group, winning, bonus };
+            }
+        """)
+        return result
+    except Exception as e:
+        print(f'⚠️ 720+ 당첨번호 조회 실패: {e}')
+        return {'round': 0, 'group': '', 'winning': [], 'bonus': []}
+
+
+def calc_720_rank(my_group: str, my_digits: list, win_group: str, win_digits: list) -> str:
+    """720+ 등수 계산 (간이)"""
+    if not win_digits or len(win_digits) < 6:
+        return '미당첨'
+    if my_group == win_group and my_digits == win_digits:
+        return '1'
+    # 6자리 일치 + 조 다름
+    if my_digits == win_digits:
+        return '2'
+    # 뒤 5자리 일치
+    if my_digits[-5:] == win_digits[-5:]:
+        return '3'
+    # 뒤 4자리 일치
+    if my_digits[-4:] == win_digits[-4:]:
+        return '4'
+    # 뒤 3자리 일치
+    if my_digits[-3:] == win_digits[-3:]:
+        return '5'
+    return '미당첨'
+
+
+def get_purchases(page: Page) -> dict:
+    """구매내역에서 645/720 최근 게임 추출"""
     page.goto(
         "https://www.dhlottery.co.kr/mypage/mylotteryledger",
         timeout=60000, wait_until="domcontentloaded",
     )
     page.wait_for_load_state("networkidle", timeout=30000)
-
-    # Click search button to load results
-    try:
-        search_btn = page.locator("input[value='조회'], button:has-text('조회')")
-        if search_btn.first.is_visible(timeout=3000):
-            search_btn.first.click()
-            page.wait_for_load_state("networkidle", timeout=15000)
-            time.sleep(2)
-    except Exception:
-        pass
-
-    page.screenshot(path="debug_winning_check.png")
+    time.sleep(2)
+    page.screenshot(path="debug_ledger.png")
     print(f"Current URL: {page.url}")
 
-    # Extract results from the purchase history table
-    results = page.evaluate("""
+    # 645와 720 구매내역 추출
+    data = page.evaluate("""
         () => {
-            const results = [];
+            const lotto645 = [];
+            const lotto720 = [];
 
-            const rows = document.querySelectorAll(
-                '.tbl_data tbody tr, table.tbl_data_round tbody tr, #tblBuyList tbody tr'
-            );
-
+            // 모든 행 검사
+            const rows = document.querySelectorAll('tr, li');
             for (const row of rows) {
-                const cells = row.querySelectorAll('td');
-                if (cells.length < 3) continue;
+                const text = row.textContent;
+                const balls = [...row.querySelectorAll('span[class*="ball"]')]
+                    .map(el => parseInt(el.textContent.trim()))
+                    .filter(n => !isNaN(n));
 
-                const nums = [];
-                row.querySelectorAll('span[class*="ball"]').forEach(el => {
-                    const n = parseInt(el.textContent.trim());
-                    if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
-                });
+                if (balls.length === 0) continue;
 
-                const rowText = row.textContent;
-
-                let rank = '미당첨';
-                const rankMatch = rowText.match(/(\\d)등/);
-                if (rankMatch) rank = rankMatch[1];
-
-                let prize = 0;
-                for (let i = cells.length - 1; i >= 0; i--) {
-                    const text = cells[i].textContent.trim();
-                    const m = text.match(/([\\d,]+)원/);
-                    if (m) {
-                        const val = parseInt(m[1].replace(/,/g, ''));
-                        if (val > 0 && val !== nums.length) {
-                            prize = val;
-                            break;
-                        }
-                    }
+                // 645 식별: 6개 ball, 모두 1-45 범위
+                const valid645 = balls.filter(n => n >= 1 && n <= 45);
+                if (valid645.length >= 6 && valid645.length <= 7) {
+                    // 회차/등수 추출
+                    const rankMatch = text.match(/(\\d)등/);
+                    const roundMatch = text.match(/(\\d+)\\s*회/);
+                    lotto645.push({
+                        numbers: valid645.slice(0, 6),
+                        rank: rankMatch ? rankMatch[1] : '미당첨',
+                        round: roundMatch ? parseInt(roundMatch[1]) : 0,
+                    });
+                    continue;
                 }
 
-                if (nums.length === 6) {
-                    results.push({ numbers: nums, rank: rank, prize: prize });
+                // 720 식별: 1자리 숫자 7개 (조 + 6자리)
+                const valid720 = balls.filter(n => n >= 0 && n <= 9);
+                if (valid720.length === 7) {
+                    const rankMatch = text.match(/(\\d)등/);
+                    const roundMatch = text.match(/(\\d+)\\s*회/);
+                    lotto720.push({
+                        group: String(valid720[0]),
+                        digits: valid720.slice(1, 7),
+                        rank: rankMatch ? rankMatch[1] : '미당첨',
+                        round: roundMatch ? parseInt(roundMatch[1]) : 0,
+                    });
                 }
             }
 
-            return results;
+            return { lotto645, lotto720 };
         }
     """)
-
-    return results
+    return data
 
 
 def run(playwright: Playwright) -> None:
@@ -96,6 +225,7 @@ def run(playwright: Playwright) -> None:
     use_headless = os.environ.get('FORCE_HEADLESS') == '1'
     browser = playwright.chromium.launch(
         headless=use_headless,
+        ignore_default_args=['--enable-automation'],
         args=['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage'],
     )
     context = browser.new_context(
@@ -117,32 +247,64 @@ def run(playwright: Playwright) -> None:
         login(page)
 
         print("=" * 40)
-        print("Checking winning results...")
-        results = check_winning(page)
+        print("📋 구매내역 조회...")
+        purchases = get_purchases(page)
+        print(f"  645: {len(purchases['lotto645'])}게임, 720: {len(purchases['lotto720'])}게임")
+
+        print("=" * 40)
+        print("🎯 645 당첨번호 조회...")
+        win645 = get_645_winning_numbers(page)
+        print(f"  {win645['round']}회: {win645['winning']} + 보너스 {win645['bonus']}")
+
+        print("=" * 40)
+        print("🎯 720+ 당첨번호 조회...")
+        win720 = get_720_winning_numbers(page)
+        print(f"  {win720['round']}회: {win720['group']}조 {win720['winning']}")
 
         print("=" * 40)
         print("Checking balance...")
         balance = get_balance(page)
+        print(f"💰 잔액: {balance:,}원")
 
-        has_won = any(r.get('rank') != '미당첨' for r in results)
-        total_prize = sum(r.get('prize', 0) for r in results if r.get('rank') != '미당첨')
+        # 645 결과 계산 및 알림
+        if purchases['lotto645']:
+            results_645 = []
+            for p in purchases['lotto645']:
+                rank = calc_645_rank(p['numbers'], win645['winning'], win645['bonus'])
+                results_645.append({
+                    'numbers': p['numbers'],
+                    'rank': rank,
+                })
+            send_645_winning(
+                round_no=win645['round'],
+                winning=win645['winning'],
+                bonus=win645['bonus'],
+                my_games=results_645,
+                balance=balance,
+            )
+            print(f'✅ 645 알림 전송')
 
-        if has_won:
-            print(f"Prize: {total_prize:,} won")
-        else:
-            print("No winning this time")
+        # 720 결과 계산 및 알림
+        if purchases['lotto720']:
+            results_720 = []
+            for p in purchases['lotto720']:
+                rank = calc_720_rank(p['group'], p['digits'], win720['group'], win720['winning'])
+                results_720.append({
+                    'group': p['group'],
+                    'digits': p['digits'],
+                    'rank': rank,
+                })
+            send_720_winning(
+                round_no=win720['round'],
+                win_group=win720['group'],
+                win_digits=win720['winning'],
+                my_games=results_720,
+                balance=balance,
+            )
+            print(f'✅ 720 알림 전송')
 
-        for r in results:
-            print(f"  {r['numbers']} -> {r['rank']} ({r['prize']:,} won)")
-
-        print(f"Balance: {balance:,} won")
-
-        send_winning_notification(
-            has_won=has_won,
-            results=results,
-            total_prize=total_prize,
-            balance=balance,
-        )
+        if not purchases['lotto645'] and not purchases['lotto720']:
+            print('⚠️ 구매내역 없음')
 
     except Exception as e:
         print(f"Error: {e}")

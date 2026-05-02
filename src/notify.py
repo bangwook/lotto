@@ -148,6 +148,69 @@ def send_error_notification(script: str, error: str):
     _send_telegram('\n'.join(lines))
 
 
+def send_645_winning(round_no: int, winning: list, bonus: int, my_games: list, balance: int):
+    """645 당첨 확인 결과를 Telegram으로 전송"""
+    has_won = any(g.get('rank') != '미당첨' for g in my_games)
+    icon = "🎉" if has_won else "😢"
+    title = f"{icon} 로또 6/45 당첨 확인 ({round_no}회차)"
+
+    lines = [f"<b>{title}</b>", ""]
+
+    # 당첨번호
+    if winning:
+        win_str = '  '.join(str(n).zfill(2) for n in winning)
+        lines.append(f"🎯 <b>당첨번호:</b> <code>{win_str}</code>")
+        if bonus:
+            lines.append(f"   ➕ <b>보너스:</b> <code>{str(bonus).zfill(2)}</code>")
+        lines.append("")
+
+    # 내 번호와 결과
+    lines.append("🎱 <b>내 번호</b>")
+    for i, g in enumerate(my_games, 1):
+        nums_str = '  '.join(str(n).zfill(2) for n in g.get('numbers', []))
+        rank = g.get('rank', '미당첨')
+        rank_label = f"🏆 <b>{rank}등</b>" if rank != '미당첨' else "❌ 미당첨"
+        lines.append(f"  <b>{chr(64 + i)}</b>  <code>{nums_str}</code>  {rank_label}")
+
+    lines.extend([
+        "",
+        f"💰 <b>잔액:</b> {balance:,}원",
+        f"📅 <b>일시:</b> {_kst_now()}",
+    ])
+    _send_telegram('\n'.join(lines))
+
+
+def send_720_winning(round_no: int, win_group: str, win_digits: list, my_games: list, balance: int):
+    """720+ 당첨 확인 결과를 Telegram으로 전송"""
+    has_won = any(g.get('rank') != '미당첨' for g in my_games)
+    icon = "🎉" if has_won else "😢"
+    title = f"{icon} 연금복권 720+ 당첨 확인 ({round_no}회차)"
+
+    lines = [f"<b>{title}</b>", ""]
+
+    # 당첨번호
+    if win_digits:
+        digits_str = ' '.join(str(n) for n in win_digits)
+        lines.append(f"🎯 <b>당첨번호:</b> {win_group}조 <code>{digits_str}</code>")
+        lines.append("")
+
+    # 내 번호와 결과
+    lines.append("🎫 <b>내 번호</b>")
+    for i, g in enumerate(my_games, 1):
+        digits_str = ' '.join(str(n) for n in g.get('digits', []))
+        group = g.get('group', '?')
+        rank = g.get('rank', '미당첨')
+        rank_label = f"🏆 <b>{rank}등</b>" if rank != '미당첨' else "❌ 미당첨"
+        lines.append(f"  <b>{chr(64 + i)}</b>  {group}조 <code>{digits_str}</code>  {rank_label}")
+
+    lines.extend([
+        "",
+        f"💰 <b>잔액:</b> {balance:,}원",
+        f"📅 <b>일시:</b> {_kst_now()}",
+    ])
+    _send_telegram('\n'.join(lines))
+
+
 def send_winning_notification(has_won: bool, results: list, total_prize: int, balance: int):
     """당첨 확인 결과를 Telegram으로 전송합니다."""
     if has_won:
