@@ -44,22 +44,36 @@ def get_645_winning_numbers(page: Page, draw_no: int = 0) -> dict:
                         { credentials: 'include', headers: { 'Accept': 'application/json' } }
                     );
                     const text = await r.text();
-                    try { return JSON.parse(text); } catch (e) { return { _raw: text.slice(0, 200) }; }
+                    let parsed = null;
+                    try { parsed = JSON.parse(text); } catch (e) {}
+                    return {
+                        status: r.status,
+                        contentType: r.headers.get('content-type') || '',
+                        url: r.url,
+                        rawPreview: text.slice(0, 300),
+                        parsed,
+                    };
                 }""",
                 attempt_no,
             )
             if not isinstance(result, dict):
                 print(f'⚠️ 645 API 비정상 응답 ({attempt_no}회): {result}')
                 continue
-            if result.get('returnValue') != 'success':
-                print(f'⚠️ 645 {attempt_no}회 미발표 (returnValue={result.get("returnValue")})')
+
+            parsed = result.get('parsed')
+            if not parsed:
+                print(f'⚠️ 645 API JSON 파싱 실패 ({attempt_no}회): status={result.get("status")} ct={result.get("contentType")}')
+                print(f'   raw: {result.get("rawPreview", "")[:200]}')
                 continue
-            winning = [result.get(f'drwtNo{i}') for i in range(1, 7)]
+            if parsed.get('returnValue') != 'success':
+                print(f'⚠️ 645 {attempt_no}회 미발표 (returnValue={parsed.get("returnValue")})')
+                continue
+            winning = [parsed.get(f'drwtNo{i}') for i in range(1, 7)]
             return {
-                'round': int(result.get('drwNo') or attempt_no),
+                'round': int(parsed.get('drwNo') or attempt_no),
                 'winning': [int(n) for n in winning if n is not None],
-                'bonus': int(result['bnusNo']) if result.get('bnusNo') else None,
-                'date': result.get('drwNoDate', ''),
+                'bonus': int(parsed['bnusNo']) if parsed.get('bnusNo') else None,
+                'date': parsed.get('drwNoDate', ''),
             }
         except Exception as e:
             print(f'⚠️ 645 API 호출 실패 ({attempt_no}회): {e}')
@@ -339,101 +353,135 @@ def get_purchases(page: Page) -> dict:
     return {'lotto645': lotto645, 'lotto720': lotto720}
 
 
+_NAV_CLASS_PATTERNS = ('depth1', 'depth2', 'depth3', 'menu', 'lottery-tit',
+                       'custom-select', 'nav', 'header', 'gnb', 'lnb',
+                       'tab-', 'rec-select', 'select-')
+
+
 def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
-    """ledger의 각 645 항목 클릭 → 티켓 보기 모달에서 번호 추출하여 entry['numbers'] 채움.
+    """ledger의 각 645 행 클릭 → 티켓 보기 모달에서 번호 추출하여 entry['numbers'] 채움.
 
-    raw 텍스트("63045 06832 ...")는 자릿수 패딩 없는 발권 코드이며, 실제 번호는
-    모달의 "A 자동 5 17 25 33 35 36" 행에 패딩되어 표시된다.
-
-    클릭 전략:
-    1. 텍스트 "로또6/45"가 있는 leaf 요소 자체 클릭
-    2. 그 부모 행(tr/li) 클릭
-    3. 같은 행 안의 a/button/onclick 트리거 클릭
-    4. 같은 행의 "티켓" / 회차 텍스트 클릭
+    구매내역 페이지에는 "로또6/45" 텍스트가 네비게이션 메뉴에도 등장하므로,
+    네비게이션/select 컨테이너 안의 매치는 제외하고 실제 구매행만 식별한다.
+    실제 행은 회차(숫자)가 같은 컨테이너 내에 함께 있다는 특성으로 구분한다.
     """
     print(f'🔍 645 티켓 모달에서 번호 추출 시도 ({len(lotto645)}건)...')
 
-    # 디버그: 페이지 구조 한 번 확인
-    debug_info = page.evaluate(r"""
-        () => {
-            const result = { count: 0, samples: [] };
-            document.querySelectorAll('*').forEach(el => {
-                if (el.children.length === 0 && (el.textContent || '').trim() === '로또6/45') {
-                    result.count++;
-                    if (result.samples.length < 3) {
-                        let parent = el;
-                        const chain = [];
-                        for (let i = 0; i < 5 && parent; i++, parent = parent.parentElement) {
-                            chain.push({
-                                tag: parent.tagName,
-                                cls: (parent.className || '').toString().substring(0, 60),
-                                id: parent.id || '',
-                                hasOnclick: !!parent.onclick || parent.hasAttribute('onclick'),
-                            });
-                        }
-                        result.samples.push(chain);
+    nav_pat = list(_NAV_CLASS_PATTERNS)
+    expected_rounds = [str(e.get('round')) for e in lotto645 if e.get('round')]
+
+    debug_info = page.evaluate(
+        r"""([navPatterns, expectedRounds]) => {
+            const isInNav = (el) => {
+                let p = el;
+                for (let i = 0; i < 10 && p; i++, p = p.parentElement) {
+                    const cls = ((p.className || '') + '').toLowerCase();
+                    const id = (p.id || '').toLowerCase();
+                    for (const pat of navPatterns) {
+                        if (cls.includes(pat) || id.includes(pat)) return true;
                     }
                 }
+                return false;
+            };
+
+            const candidates = [];
+            const seen = new Set();
+
+            // 1) "로또6/45" 텍스트가 있는 모든 element 찾기
+            document.querySelectorAll('*').forEach(el => {
+                const t = (el.textContent || '');
+                if (!t.includes('로또6/45')) return;
+                if (isInNav(el)) return;
+
+                // 2) 행 컨테이너로 승격 (tr/li/div with class containing 'row'/'item'/'list')
+                let row = el;
+                for (let i = 0; i < 8 && row; i++, row = row.parentElement) {
+                    if (!row) break;
+                    const tag = row.tagName;
+                    const cls = ((row.className || '') + '').toLowerCase();
+                    if (tag === 'TR' || tag === 'LI' ||
+                        cls.includes('row') || cls.includes('item') || cls.includes('list-detail')) {
+                        break;
+                    }
+                }
+                if (!row) return;
+                if (seen.has(row)) return;
+                seen.add(row);
+
+                // 3) 회차가 같은 행에 있는지 확인
+                const rowText = (row.textContent || '').replace(/\s+/g, ' ');
+                const hasExpectedRound = expectedRounds.some(r => rowText.includes(r));
+                candidates.push({ row, hasExpectedRound });
             });
-            return result;
-        }
-    """)
-    print(f'  🔬 "로또6/45" leaf 요소 {debug_info["count"]}개 발견')
-    for i, chain in enumerate(debug_info.get('samples', [])):
-        print(f'    sample {i}: {chain}')
+
+            // 매칭된 회차가 있는 후보 우선
+            candidates.sort((a, b) => (b.hasExpectedRound ? 1 : 0) - (a.hasExpectedRound ? 1 : 0));
+
+            const samples = candidates.slice(0, 6).map(c => ({
+                tag: c.row.tagName,
+                cls: ((c.row.className || '') + '').substring(0, 80),
+                id: c.row.id || '',
+                hasRound: c.hasExpectedRound,
+                preview: ((c.row.textContent || '').replace(/\s+/g, ' ')).substring(0, 120),
+                hasOnclick: !!c.row.onclick || c.row.hasAttribute('onclick'),
+            }));
+
+            // 후보 row 마킹 (idx 부여)
+            window.__lotto645Rows = candidates.map(c => c.row);
+
+            return { count: candidates.length, samples };
+        }""",
+        [nav_pat, expected_rounds],
+    )
+    print(f'  🔬 후보 행 {debug_info["count"]}개 발견 (네비/select 제외)')
+    for i, s in enumerate(debug_info.get('samples', [])):
+        print(f'    cand {i}: <{s["tag"]}.{s["cls"]}> round={s["hasRound"]} preview="{s["preview"][:80]}"')
 
     for idx, entry in enumerate(lotto645):
         if entry.get('numbers'):
             continue
 
         opened = False
-        # 다중 전략으로 클릭 시도
-        for strategy in ('self', 'tr_li_parent', 'row_link'):
+        for strategy in ('row_self', 'row_link', 'click_round_text'):
             try:
                 clicked = page.evaluate(
-                    """([targetIdx, strategy]) => {
-                        let count = 0;
-                        // 텍스트가 정확히 "로또6/45"인 leaf 요소만 (중첩 컨테이너 카운트 방지)
-                        const leaves = [];
-                        document.querySelectorAll('*').forEach(el => {
-                            if (el.children.length === 0 && (el.textContent || '').trim() === '로또6/45') {
-                                leaves.push(el);
-                            }
-                        });
-
-                        if (targetIdx >= leaves.length) return { ok: false, reason: 'index out of range', count: leaves.length };
-                        const leaf = leaves[targetIdx];
+                    """([targetIdx, strategy, expectedRound]) => {
+                        const rows = window.__lotto645Rows || [];
+                        if (targetIdx >= rows.length) return { ok: false, reason: 'index out of range', count: rows.length };
+                        const row = rows[targetIdx];
 
                         let target = null;
-                        if (strategy === 'self') {
-                            target = leaf;
-                        } else if (strategy === 'tr_li_parent') {
-                            let p = leaf.parentElement;
-                            while (p && !['TR', 'LI'].includes(p.tagName)) p = p.parentElement;
-                            target = p;
+                        if (strategy === 'row_self') {
+                            target = row;
                         } else if (strategy === 'row_link') {
-                            let p = leaf.parentElement;
-                            while (p && !['TR', 'LI'].includes(p.tagName)) p = p.parentElement;
-                            if (p) target = p.querySelector('a[onclick], button, [onclick]');
+                            target = row.querySelector('a[onclick], button, [onclick], a[href*="javascript"]');
+                        } else if (strategy === 'click_round_text') {
+                            // 회차 숫자 또는 "보기"/"상세" 텍스트가 있는 자식 클릭
+                            const all = row.querySelectorAll('a, button, span, td, div');
+                            for (const el of all) {
+                                const t = (el.textContent || '').trim();
+                                if (t === expectedRound || t.includes(expectedRound + '회') ||
+                                    t.includes('보기') || t.includes('상세')) {
+                                    target = el;
+                                    break;
+                                }
+                            }
                         }
 
                         if (!target) return { ok: false, reason: 'target not found' };
                         try {
                             target.click();
-                            return { ok: true, target: target.tagName + '.' + (target.className || '').toString().substring(0, 40) };
+                            return { ok: true, target: target.tagName + '.' + ((target.className || '') + '').substring(0, 40) };
                         } catch (e) {
-                            return { ok: false, reason: 'click failed: ' + e.message };
+                            return { ok: false, reason: e.message };
                         }
                     }""",
-                    [idx, strategy],
+                    [idx, strategy, str(entry.get('round', ''))],
                 )
-                if not isinstance(clicked, dict):
-                    continue
-                if not clicked.get('ok'):
+                if not isinstance(clicked, dict) or not clicked.get('ok'):
                     continue
 
                 time.sleep(1.2)
-                # 모달이 떴는지 확인 (티켓 보기 텍스트 또는 모달 컨테이너)
                 modal_open = page.evaluate(r"""
                     () => {
                         const text = (document.body.innerText || '');
@@ -453,7 +501,7 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
                     opened = True
                     break
                 else:
-                    print(f'  ⚠️ #{idx + 1} {strategy} 클릭했으나 모달 미감지')
+                    print(f'  ⚠️ #{idx + 1} {strategy} 클릭했으나 모달 미감지 (target={clicked.get("target")})')
             except Exception as e:
                 print(f'  ⚠️ #{idx + 1} {strategy} 실패: {e}')
 
