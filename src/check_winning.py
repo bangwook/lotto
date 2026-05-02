@@ -181,36 +181,52 @@ def get_purchases(page: Page) -> dict:
     print(f"Current URL: {page.url}")
 
     # 페이지 텍스트에서 패턴 매칭으로 게임 추출
+    # 형식 (줄별):
+    # 2026-05-02 / 연금복권720+ / 314 / 3조 068907 / 1 / 미추첨 / - / 2026-05-07 / 미해당
+    # 2026-05-01 / 로또6/45 / 1222 / NNNNN NNNNN ... / 6 / 미당첨 / - / 2026-05-02 / 미해당
     body_text = page.inner_text('body')
 
-    # 720+ 추출: "연금복권720+ (NNN)" 다음 "X조 NNNNNN"
+    # 720+ 추출: "연금복권720+\n회차\nN조 NNNNNN\n매수\n당첨결과"
     lotto720 = []
-    for m in re.finditer(r'연금복권720\+\s*\((\d+)\)\s*\n\s*(\d)조\s*(\d{6})', body_text):
-        round_no, group, digits = m.group(1), m.group(2), m.group(3)
+    for m in re.finditer(
+        r'연금복권720\+\s*\n\s*(\d+)\s*\n\s*(\d)조\s*(\d{6})\s*\n\s*\d+\s*\n\s*([^\n]+)',
+        body_text
+    ):
+        round_no, group, digits, result = m.group(1), m.group(2), m.group(3), m.group(4).strip()
+        rank_match = re.search(r'(\d)등', result)
+        rank = rank_match.group(1) if rank_match else ('미추첨' if '미추첨' in result else '미당첨')
         lotto720.append({
             'round': int(round_no),
             'group': group,
             'digits': [int(d) for d in digits],
-            'rank': '미당첨',  # 기본값, 당첨 페이지에서 갱신
+            'rank': rank,
         })
 
-    # 645 추출: "로또6/45 (NNNN)" 다음 줄에 번호 묶음
-    # 형식이 패딩 없는 숫자 연속이라 정확한 파싱 어려움 → 텍스트 그대로 캐치
+    # 645 추출: "로또6/45\n회차\n번호텍스트\n매수\n당첨결과"
     lotto645 = []
-    for m in re.finditer(r'로또6/45\s*\((\d+)\)\s*\n\s*([\d\s]+)', body_text):
-        round_no, nums_text = m.group(1), m.group(2).strip()
+    for m in re.finditer(
+        r'로또6/45\s*\n\s*(\d+)\s*\n\s*([^\n]+)\s*\n\s*\d+\s*\n\s*([^\n]+)',
+        body_text
+    ):
+        round_no, nums_text, result = m.group(1), m.group(2).strip(), m.group(3).strip()
+        rank_match = re.search(r'(\d)등', result)
+        rank = rank_match.group(1) if rank_match else ('미추첨' if '미추첨' in result else '미당첨')
         lotto645.append({
             'round': int(round_no),
-            'raw_numbers': nums_text,  # 원본 텍스트 (파싱 불완전)
-            'numbers': [],  # 추후 정확한 파싱 또는 상세 페이지에서 추출
-            'rank': '미당첨',
+            'raw_numbers': nums_text,
+            'numbers': [],
+            'rank': rank,
         })
 
     print(f'🎫 720+ 항목: {len(lotto720)}, 645 항목: {len(lotto645)}')
+    if lotto720:
+        print(f'  720 샘플: {lotto720[0]}')
+    if lotto645:
+        print(f'  645 샘플: {lotto645[0]}')
 
-    # 디버그: 본문 일부
+    # 디버그: 본문 일부 (추출 실패 시)
     if not lotto720 and not lotto645:
-        print(f'🔍 본문(800자):\n{body_text[:800]}')
+        print(f'🔍 본문(1500자):\n{body_text[:1500]}')
 
     return {'lotto645': lotto645, 'lotto720': lotto720}
 
