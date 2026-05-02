@@ -165,9 +165,35 @@ def get_purchases(page: Page) -> dict:
         timeout=60000, wait_until="domcontentloaded",
     )
     page.wait_for_load_state("networkidle", timeout=30000)
-    time.sleep(2)
+    time.sleep(3)
     page.screenshot(path="debug_ledger.png")
     print(f"Current URL: {page.url}")
+
+    # 디버그: 페이지에서 ball 요소 찾기
+    debug = page.evaluate("""
+        () => {
+            const balls = [...document.querySelectorAll('span[class*="ball"]')];
+            const allBallsCount = balls.length;
+            const sample = balls.slice(0, 15).map(el => ({
+                num: el.textContent.trim(),
+                class: el.className.substring(0, 60),
+                parentTag: el.parentElement?.tagName,
+                parentClass: (el.parentElement?.className || '').substring(0, 60),
+                gpTag: el.parentElement?.parentElement?.tagName,
+                gpClass: (el.parentElement?.parentElement?.className || '').substring(0, 60),
+            }));
+            const tableCount = document.querySelectorAll('table').length;
+            const tbodyCount = document.querySelectorAll('tbody').length;
+            const trCount = document.querySelectorAll('tr').length;
+            const liCount = document.querySelectorAll('li').length;
+            const bodyText = document.body.innerText.substring(0, 500);
+            return { allBallsCount, sample, tableCount, tbodyCount, trCount, liCount, bodyText };
+        }
+    """)
+    print(f'🔍 ledger 디버그:')
+    print(f'  ball요소: {debug["allBallsCount"]}, table: {debug["tableCount"]}, tr: {debug["trCount"]}, li: {debug["liCount"]}')
+    print(f'  ball샘플: {debug["sample"][:5]}')
+    print(f'  본문(500자): {debug["bodyText"][:300]}')
 
     # 645와 720 구매내역 추출
     data = page.evaluate("""
