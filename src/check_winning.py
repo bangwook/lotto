@@ -458,21 +458,16 @@ def get_purchases(page: Page) -> dict:
 
 
 def _detect_645_modal(page: Page) -> bool:
-    """티켓 모달이 열렸는지 감지."""
+    """티켓 모달이 열렸는지 감지. 실제 모달 컨텐츠 키워드만으로 판정."""
     try:
         return page.evaluate(r"""
             () => {
                 const text = (document.body.innerText || '');
-                // A 자동/수동 + 6번호 패턴이 보이면 모달이 열린 것
-                if (/[A-J]\s*(?:자동|수동|반자동)\s+\d{1,2}/.test(text)) return true;
-                if (text.includes('티켓 보기') && text.includes('발행일')) return true;
-                const modalSels = ['[class*="modal"]', '[class*="popup"]', '[class*="layer"]', '[role="dialog"]'];
-                for (const sel of modalSels) {
-                    const els = document.querySelectorAll(sel);
-                    for (const el of els) {
-                        if (el.offsetParent !== null && (el.textContent || '').includes('티켓')) return true;
-                    }
-                }
+                // 티켓 모달에만 존재하는 고유 키워드 조합
+                // (메뉴/필터에는 없는 단어)
+                if (text.includes('발행일') && text.includes('추첨일')) return true;
+                if (text.includes('지급기한')) return true;
+                if (text.includes('티켓 보기')) return true;
                 return false;
             }
         """) or False
@@ -488,7 +483,7 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
     """
     print(f'🔍 645 티켓 모달에서 번호 추출 시도 ({len(lotto645)}건)...')
 
-    # 행 식별 + 자식 디버그 (outerHTML 일부도)
+    # 행 식별 + 풀 자식 디버그
     debug_info = page.evaluate(r"""
         () => {
             const selectors = [
@@ -502,20 +497,33 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
                 if (rows.length > 0) { usedSel = sel; break; }
             }
 
-            const samples = rows.slice(0, 3).map(row => {
-                const desc = [...row.querySelectorAll('*')].slice(0, 25).map(el => ({
+            const samples = rows.slice(0, 2).map(row => {
+                const allDesc = [...row.querySelectorAll('*')];
+                const descSummary = allDesc.map(el => ({
                     tag: el.tagName,
                     cls: ((el.className || '') + '').substring(0, 50),
                     text: (el.textContent || '').trim().substring(0, 30),
                     onclick: (el.getAttribute('onclick') || '').substring(0, 50),
                     cursor: getComputedStyle(el).cursor,
+                    dataAttrs: [...el.attributes].filter(a => a.name.startsWith('data-')).map(a => `${a.name}=${a.value}`).join(' ').substring(0, 80),
                 }));
+
+                // 특수 태그 (img/svg/button/a/i) 추출
+                const special = [...row.querySelectorAll('img, svg, button, a, i, [data-action], [data-target], [data-toggle]')]
+                    .map(el => ({
+                        tag: el.tagName,
+                        cls: ((el.className || '') + '').substring(0, 50),
+                        text: (el.textContent || '').trim().substring(0, 30),
+                        outer: (el.outerHTML || '').substring(0, 200),
+                    }));
+
                 return {
                     tag: row.tagName,
                     cls: ((row.className || '') + '').substring(0, 60),
-                    htmlPreview: (row.outerHTML || '').substring(0, 500),
-                    descCount: row.querySelectorAll('*').length,
-                    descendants: desc,
+                    htmlFull: (row.outerHTML || '').substring(0, 3000),
+                    descCount: allDesc.length,
+                    descendants: descSummary,
+                    special,
                 };
             });
 
@@ -526,11 +534,17 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
     print(f'  🔬 행 후보 {debug_info["count"]}개 (셀렉터: {debug_info.get("usedSel", "")})')
     for i, s in enumerate(debug_info.get('samples', [])):
         print(f'    행 {i}: <{s["tag"]}.{s["cls"]}> 자손 {s["descCount"]}개')
-        print(f'    행 {i} HTML 미리보기: {s["htmlPreview"][:300]}')
-        for d in s.get('descendants', [])[:15]:
+        print(f'    행 {i} 풀 HTML: {s["htmlFull"]}')
+        print(f'    행 {i} 자손 전체:')
+        for d in s.get('descendants', []):
             cursor = d.get('cursor', '')
-            cur_marker = ' [cursor:pointer]' if cursor == 'pointer' else ''
-            print(f'      ▸ {d["tag"]}.{d["cls"]} text="{d["text"]}"{cur_marker}')
+            cur_marker = ' [pointer]' if cursor == 'pointer' else ''
+            data = f' data="{d["dataAttrs"]}"' if d.get('dataAttrs') else ''
+            print(f'      ▸ {d["tag"]}.{d["cls"]} text="{d["text"]}"{cur_marker}{data}')
+        print(f'    행 {i} 특수 태그 (img/svg/button/a/i/data-*): {len(s.get("special", []))}개')
+        for sp in s.get('special', []):
+            print(f'      ✦ {sp["tag"]}.{sp["cls"]} text="{sp["text"]}"')
+            print(f'        outer: {sp["outer"]}')
 
     for idx, entry in enumerate(lotto645):
         if entry.get('numbers'):
@@ -540,6 +554,7 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
         # Playwright의 li.whl-row 행 자체를 click 시도
         try:
             row_locator = page.locator('li.whl-row').nth(idx)
+            url_before = page.url
 
             # 시도 1: 행 자체 (Playwright 실제 마우스 이벤트)
             for trial_name, trial_fn in (
@@ -550,6 +565,10 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
                 try:
                     trial_fn()
                     time.sleep(1.2)
+                    url_after = page.url
+                    if url_after != url_before:
+                        print(f'  📍 #{idx + 1} {trial_name}: URL 변경 {url_before} → {url_after}')
+                        url_before = url_after
                     if _detect_645_modal(page):
                         print(f'  ✅ #{idx + 1} {trial_name} 으로 모달 열림')
                         opened = True
