@@ -36,12 +36,37 @@ services:
       - .env.docker
     restart: "no"
 
-  # 당첨 확인
+  # 당첨 확인 (645 + 720)
   lotto-check:
     build: .
     container_name: lotto-check
     environment:
       - TZ=Asia/Seoul
+      - CHECK_TARGET=all
+    env_file:
+      - .env.docker
+    command: ["python", "src/check_winning.py"]
+    restart: "no"
+
+  # 당첨 확인 (645만)
+  lotto-check-645:
+    build: .
+    container_name: lotto-check-645
+    environment:
+      - TZ=Asia/Seoul
+      - CHECK_TARGET=645
+    env_file:
+      - .env.docker
+    command: ["python", "src/check_winning.py"]
+    restart: "no"
+
+  # 당첨 확인 (720만)
+  lotto-check-720:
+    build: .
+    container_name: lotto-check-720
+    environment:
+      - TZ=Asia/Seoul
+      - CHECK_TARGET=720
     env_file:
       - .env.docker
     command: ["python", "src/check_winning.py"]

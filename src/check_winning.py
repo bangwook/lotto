@@ -249,6 +249,8 @@ def run(playwright: Playwright) -> None:
     """메인 실행 함수"""
     import os
     use_headless = os.environ.get('FORCE_HEADLESS') == '1'
+    check_target = os.environ.get('CHECK_TARGET', 'all').lower()  # 'all', '645', '720'
+    print(f'🎯 확인 대상: {check_target}')
     browser = playwright.chromium.launch(
         headless=use_headless,
         ignore_default_args=['--enable-automation'],
@@ -277,15 +279,21 @@ def run(playwright: Playwright) -> None:
         purchases = get_purchases(page)
         print(f"  645: {len(purchases['lotto645'])}게임, 720: {len(purchases['lotto720'])}게임")
 
-        print("=" * 40)
-        print("🎯 645 당첨번호 조회...")
-        win645 = get_645_winning_numbers(page)
-        print(f"  {win645['round']}회: {win645['winning']} + 보너스 {win645['bonus']}")
+        # CHECK_TARGET에 따라 필요한 당첨번호만 조회
+        win645 = {'round': 0, 'winning': [], 'bonus': None}
+        win720 = {'round': 0, 'group': '', 'winning': [], 'bonus': []}
 
-        print("=" * 40)
-        print("🎯 720+ 당첨번호 조회...")
-        win720 = get_720_winning_numbers(page)
-        print(f"  {win720['round']}회: {win720['group']}조 {win720['winning']}")
+        if check_target in ('all', '645'):
+            print("=" * 40)
+            print("🎯 645 당첨번호 조회...")
+            win645 = get_645_winning_numbers(page)
+            print(f"  {win645['round']}회: {win645['winning']} + 보너스 {win645['bonus']}")
+
+        if check_target in ('all', '720'):
+            print("=" * 40)
+            print("🎯 720+ 당첨번호 조회...")
+            win720 = get_720_winning_numbers(page)
+            print(f"  {win720['round']}회: {win720['group']}조 {win720['winning']}")
 
         print("=" * 40)
         print("Checking balance...")
@@ -293,7 +301,7 @@ def run(playwright: Playwright) -> None:
         print(f"💰 잔액: {balance:,}원")
 
         # 645 결과 계산 및 알림
-        if purchases['lotto645']:
+        if check_target in ('all', '645') and purchases['lotto645']:
             results_645 = []
             for p in purchases['lotto645']:
                 # 구매내역의 등수 우선
@@ -317,7 +325,7 @@ def run(playwright: Playwright) -> None:
             print(f'✅ 645 알림 전송')
 
         # 720 결과 계산 및 알림
-        if purchases['lotto720']:
+        if check_target in ('all', '720') and purchases['lotto720']:
             results_720 = []
             for p in purchases['lotto720']:
                 # 구매내역의 등수 우선, 없으면 계산
