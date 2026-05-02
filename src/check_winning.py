@@ -344,111 +344,191 @@ def _enrich_645_from_ticket_modals(page: Page, lotto645: list) -> None:
 
     raw 텍스트("63045 06832 ...")는 자릿수 패딩 없는 발권 코드이며, 실제 번호는
     모달의 "A 자동 5 17 25 33 35 36" 행에 패딩되어 표시된다.
+
+    클릭 전략:
+    1. 텍스트 "로또6/45"가 있는 leaf 요소 자체 클릭
+    2. 그 부모 행(tr/li) 클릭
+    3. 같은 행 안의 a/button/onclick 트리거 클릭
+    4. 같은 행의 "티켓" / 회차 텍스트 클릭
     """
     print(f'🔍 645 티켓 모달에서 번호 추출 시도 ({len(lotto645)}건)...')
+
+    # 디버그: 페이지 구조 한 번 확인
+    debug_info = page.evaluate(r"""
+        () => {
+            const result = { count: 0, samples: [] };
+            document.querySelectorAll('*').forEach(el => {
+                if (el.children.length === 0 && (el.textContent || '').trim() === '로또6/45') {
+                    result.count++;
+                    if (result.samples.length < 3) {
+                        let parent = el;
+                        const chain = [];
+                        for (let i = 0; i < 5 && parent; i++, parent = parent.parentElement) {
+                            chain.push({
+                                tag: parent.tagName,
+                                cls: (parent.className || '').toString().substring(0, 60),
+                                id: parent.id || '',
+                                hasOnclick: !!parent.onclick || parent.hasAttribute('onclick'),
+                            });
+                        }
+                        result.samples.push(chain);
+                    }
+                }
+            });
+            return result;
+        }
+    """)
+    print(f'  🔬 "로또6/45" leaf 요소 {debug_info["count"]}개 발견')
+    for i, chain in enumerate(debug_info.get('samples', [])):
+        print(f'    sample {i}: {chain}')
 
     for idx, entry in enumerate(lotto645):
         if entry.get('numbers'):
             continue
-        try:
-            # idx번째 645 행의 클릭 가능 요소 찾기
-            opened = page.evaluate(f"""
-                (idx) => {{
-                    let count = 0;
-                    const lines = document.querySelectorAll('tr, li, div');
-                    for (const el of lines) {{
-                        const t = (el.textContent || '').trim();
-                        if (!t.startsWith('로또6/45')) continue;
-                        if (count === idx) {{
-                            // 클릭 트리거 후보: 자기 자신 또는 자식 a/button
-                            const trigger = el.querySelector('a, button, [onclick]') || el;
-                            trigger.click();
-                            return true;
-                        }}
-                        count++;
-                    }}
-                    return false;
-                }}
-            """, idx)
-            if not opened:
-                print(f'  ⚠️ #{idx + 1} 클릭 트리거 못 찾음')
-                continue
 
-            time.sleep(1.2)  # 모달 애니메이션
-            page.screenshot(path=f"debug_645_ticket_{idx}.png")
+        opened = False
+        # 다중 전략으로 클릭 시도
+        for strategy in ('self', 'tr_li_parent', 'row_link'):
+            try:
+                clicked = page.evaluate(
+                    """([targetIdx, strategy]) => {
+                        let count = 0;
+                        // 텍스트가 정확히 "로또6/45"인 leaf 요소만 (중첩 컨테이너 카운트 방지)
+                        const leaves = [];
+                        document.querySelectorAll('*').forEach(el => {
+                            if (el.children.length === 0 && (el.textContent || '').trim() === '로또6/45') {
+                                leaves.push(el);
+                            }
+                        });
 
-            numbers = page.evaluate(r"""
-                () => {
-                    const games = [];
-                    const seen = new Set();
-                    const addGame = (nums) => {
-                        if (nums.length < 6) return;
-                        const game = nums.slice(0, 6);
-                        const key = game.join(',');
-                        if (seen.has(key)) return;
-                        seen.add(key);
-                        games.push(game);
-                    };
+                        if (targetIdx >= leaves.length) return { ok: false, reason: 'index out of range', count: leaves.length };
+                        const leaf = leaves[targetIdx];
 
-                    // 1) 텍스트 패턴: "A 자동/수동/반자동 N N N N N N"
-                    const lines = (document.body.innerText || '').split('\n');
-                    for (const ln of lines) {
-                        const m = ln.trim().match(/^([A-J])\s*(?:자동|수동|반자동)\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})/);
-                        if (m) {
-                            const nums = [m[2], m[3], m[4], m[5], m[6], m[7]].map(Number);
-                            if (nums.every(n => n >= 1 && n <= 45) && new Set(nums).size === 6) {
-                                addGame(nums);
+                        let target = null;
+                        if (strategy === 'self') {
+                            target = leaf;
+                        } else if (strategy === 'tr_li_parent') {
+                            let p = leaf.parentElement;
+                            while (p && !['TR', 'LI'].includes(p.tagName)) p = p.parentElement;
+                            target = p;
+                        } else if (strategy === 'row_link') {
+                            let p = leaf.parentElement;
+                            while (p && !['TR', 'LI'].includes(p.tagName)) p = p.parentElement;
+                            if (p) target = p.querySelector('a[onclick], button, [onclick]');
+                        }
+
+                        if (!target) return { ok: false, reason: 'target not found' };
+                        try {
+                            target.click();
+                            return { ok: true, target: target.tagName + '.' + (target.className || '').toString().substring(0, 40) };
+                        } catch (e) {
+                            return { ok: false, reason: 'click failed: ' + e.message };
+                        }
+                    }""",
+                    [idx, strategy],
+                )
+                if not isinstance(clicked, dict):
+                    continue
+                if not clicked.get('ok'):
+                    continue
+
+                time.sleep(1.2)
+                # 모달이 떴는지 확인 (티켓 보기 텍스트 또는 모달 컨테이너)
+                modal_open = page.evaluate(r"""
+                    () => {
+                        const text = (document.body.innerText || '');
+                        if (text.includes('티켓 보기')) return true;
+                        const modalSels = ['[class*="modal"]', '[class*="popup"]', '[class*="layer"]', '[role="dialog"]'];
+                        for (const sel of modalSels) {
+                            const els = document.querySelectorAll(sel);
+                            for (const el of els) {
+                                if (el.offsetParent !== null && (el.textContent || '').includes('티켓')) return true;
                             }
                         }
+                        return false;
                     }
+                """)
+                if modal_open:
+                    print(f'  ✅ #{idx + 1} {strategy} 전략으로 모달 열림 ({clicked.get("target")})')
+                    opened = True
+                    break
+                else:
+                    print(f'  ⚠️ #{idx + 1} {strategy} 클릭했으나 모달 미감지')
+            except Exception as e:
+                print(f'  ⚠️ #{idx + 1} {strategy} 실패: {e}')
 
-                    // 2) ball 셀렉터 (DOM 기반)
-                    if (games.length === 0) {
-                        document.querySelectorAll('tr, li, .game, .game_row, [class*="num"]').forEach(row => {
-                            const nums = [];
-                            row.querySelectorAll('span[class*="ball"]').forEach(el => {
-                                const n = parseInt((el.textContent || '').trim());
-                                if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
-                            });
-                            if (nums.length >= 6 && nums.length <= 8) addGame(nums);
-                        });
+        if not opened:
+            print(f'  ❌ #{idx + 1}: 모든 클릭 전략 실패')
+            continue
+
+        page.screenshot(path=f"debug_645_ticket_{idx}.png")
+
+        numbers = page.evaluate(r"""
+            () => {
+                const games = [];
+                const seen = new Set();
+                const addGame = (nums) => {
+                    if (nums.length < 6) return;
+                    const game = nums.slice(0, 6);
+                    const key = game.join(',');
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    games.push(game);
+                };
+
+                // 1) 텍스트 패턴: "A 자동/수동/반자동 N N N N N N"
+                const lines = (document.body.innerText || '').split('\n');
+                for (const ln of lines) {
+                    const m = ln.trim().match(/^([A-J])\s*(?:자동|수동|반자동)\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})/);
+                    if (m) {
+                        const nums = [m[2], m[3], m[4], m[5], m[6], m[7]].map(Number);
+                        if (nums.every(n => n >= 1 && n <= 45) && new Set(nums).size === 6) {
+                            addGame(nums);
+                        }
                     }
-
-                    return games;
                 }
-            """)
 
-            if numbers:
-                entry['numbers'] = numbers
-                print(f'  ✅ #{idx + 1}: {len(numbers)}게임 추출 - {numbers}')
-            else:
-                print(f'  ⚠️ #{idx + 1}: 모달에서 번호 추출 실패')
+                // 2) ball 셀렉터 (DOM 기반)
+                if (games.length === 0) {
+                    document.querySelectorAll('tr, li, .game, .game_row, [class*="num"]').forEach(row => {
+                        const nums = [];
+                        row.querySelectorAll('span[class*="ball"]').forEach(el => {
+                            const n = parseInt((el.textContent || '').trim());
+                            if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
+                        });
+                        if (nums.length >= 6 && nums.length <= 8) addGame(nums);
+                    });
+                }
 
-            # 모달 닫기
-            closed = False
-            for sel in ('.btn_close', '.close', '.modal_close', '[aria-label="close"]',
-                        '[aria-label="닫기"]', 'button[title="닫기"]', '.pop_close'):
-                try:
-                    btn = page.locator(sel).first
-                    if btn.is_visible(timeout=500):
-                        btn.click(force=True, timeout=2000)
-                        closed = True
-                        break
-                except Exception:
-                    continue
-            if not closed:
-                try:
-                    page.keyboard.press('Escape')
-                except Exception:
-                    pass
-            time.sleep(0.5)
-        except Exception as e:
-            print(f'  ⚠️ #{idx + 1} 처리 중 오류: {e}')
+                return games;
+            }
+        """)
+
+        if numbers:
+            entry['numbers'] = numbers
+            print(f'  ✅ #{idx + 1}: {len(numbers)}게임 추출 - {numbers}')
+        else:
+            print(f'  ⚠️ #{idx + 1}: 모달은 열렸으나 번호 추출 실패')
+
+        # 모달 닫기
+        closed = False
+        for sel in ('.btn_close', '.close', '.modal_close', '[aria-label="close"]',
+                    '[aria-label="닫기"]', 'button[title="닫기"]', '.pop_close',
+                    'button:has-text("닫기")', 'a:has-text("닫기")'):
+            try:
+                btn = page.locator(sel).first
+                if btn.is_visible(timeout=500):
+                    btn.click(force=True, timeout=2000)
+                    closed = True
+                    break
+            except Exception:
+                continue
+        if not closed:
             try:
                 page.keyboard.press('Escape')
             except Exception:
                 pass
-            time.sleep(0.5)
+        time.sleep(0.5)
 
 
 def run(playwright: Playwright) -> None:
