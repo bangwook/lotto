@@ -165,84 +165,54 @@ def get_purchases(page: Page) -> dict:
         timeout=60000, wait_until="domcontentloaded",
     )
     page.wait_for_load_state("networkidle", timeout=30000)
-    time.sleep(3)
+    time.sleep(2)
+
+    # 검색 버튼 클릭하여 데이터 로드
+    try:
+        search_btn = page.locator('button:has-text("검색"), input[value="검색"], a:has-text("검색")').first
+        search_btn.click(force=True, timeout=5000)
+        print('✅ 검색 버튼 클릭')
+        page.wait_for_load_state("networkidle", timeout=15000)
+        time.sleep(2)
+    except Exception as e:
+        print(f'⚠️ 검색 버튼 클릭 실패: {e}')
+
     page.screenshot(path="debug_ledger.png")
     print(f"Current URL: {page.url}")
 
-    # 디버그: 페이지에서 ball 요소 찾기
-    debug = page.evaluate("""
-        () => {
-            const balls = [...document.querySelectorAll('span[class*="ball"]')];
-            const allBallsCount = balls.length;
-            const sample = balls.slice(0, 15).map(el => ({
-                num: el.textContent.trim(),
-                class: el.className.substring(0, 60),
-                parentTag: el.parentElement?.tagName,
-                parentClass: (el.parentElement?.className || '').substring(0, 60),
-                gpTag: el.parentElement?.parentElement?.tagName,
-                gpClass: (el.parentElement?.parentElement?.className || '').substring(0, 60),
-            }));
-            const tableCount = document.querySelectorAll('table').length;
-            const tbodyCount = document.querySelectorAll('tbody').length;
-            const trCount = document.querySelectorAll('tr').length;
-            const liCount = document.querySelectorAll('li').length;
-            const bodyText = document.body.innerText.substring(0, 500);
-            return { allBallsCount, sample, tableCount, tbodyCount, trCount, liCount, bodyText };
-        }
-    """)
-    print(f'🔍 ledger 디버그:')
-    print(f'  ball요소: {debug["allBallsCount"]}, table: {debug["tableCount"]}, tr: {debug["trCount"]}, li: {debug["liCount"]}')
-    print(f'  ball샘플: {debug["sample"][:5]}')
-    print(f'  본문(500자): {debug["bodyText"][:300]}')
+    # 페이지 텍스트에서 패턴 매칭으로 게임 추출
+    body_text = page.inner_text('body')
 
-    # 645와 720 구매내역 추출
-    data = page.evaluate("""
-        () => {
-            const lotto645 = [];
-            const lotto720 = [];
+    # 720+ 추출: "연금복권720+ (NNN)" 다음 "X조 NNNNNN"
+    lotto720 = []
+    for m in re.finditer(r'연금복권720\+\s*\((\d+)\)\s*\n\s*(\d)조\s*(\d{6})', body_text):
+        round_no, group, digits = m.group(1), m.group(2), m.group(3)
+        lotto720.append({
+            'round': int(round_no),
+            'group': group,
+            'digits': [int(d) for d in digits],
+            'rank': '미당첨',  # 기본값, 당첨 페이지에서 갱신
+        })
 
-            // 모든 행 검사
-            const rows = document.querySelectorAll('tr, li');
-            for (const row of rows) {
-                const text = row.textContent;
-                const balls = [...row.querySelectorAll('span[class*="ball"]')]
-                    .map(el => parseInt(el.textContent.trim()))
-                    .filter(n => !isNaN(n));
+    # 645 추출: "로또6/45 (NNNN)" 다음 줄에 번호 묶음
+    # 형식이 패딩 없는 숫자 연속이라 정확한 파싱 어려움 → 텍스트 그대로 캐치
+    lotto645 = []
+    for m in re.finditer(r'로또6/45\s*\((\d+)\)\s*\n\s*([\d\s]+)', body_text):
+        round_no, nums_text = m.group(1), m.group(2).strip()
+        lotto645.append({
+            'round': int(round_no),
+            'raw_numbers': nums_text,  # 원본 텍스트 (파싱 불완전)
+            'numbers': [],  # 추후 정확한 파싱 또는 상세 페이지에서 추출
+            'rank': '미당첨',
+        })
 
-                if (balls.length === 0) continue;
+    print(f'🎫 720+ 항목: {len(lotto720)}, 645 항목: {len(lotto645)}')
 
-                // 645 식별: 6개 ball, 모두 1-45 범위
-                const valid645 = balls.filter(n => n >= 1 && n <= 45);
-                if (valid645.length >= 6 && valid645.length <= 7) {
-                    // 회차/등수 추출
-                    const rankMatch = text.match(/(\\d)등/);
-                    const roundMatch = text.match(/(\\d+)\\s*회/);
-                    lotto645.push({
-                        numbers: valid645.slice(0, 6),
-                        rank: rankMatch ? rankMatch[1] : '미당첨',
-                        round: roundMatch ? parseInt(roundMatch[1]) : 0,
-                    });
-                    continue;
-                }
+    # 디버그: 본문 일부
+    if not lotto720 and not lotto645:
+        print(f'🔍 본문(800자):\n{body_text[:800]}')
 
-                // 720 식별: 1자리 숫자 7개 (조 + 6자리)
-                const valid720 = balls.filter(n => n >= 0 && n <= 9);
-                if (valid720.length === 7) {
-                    const rankMatch = text.match(/(\\d)등/);
-                    const roundMatch = text.match(/(\\d+)\\s*회/);
-                    lotto720.push({
-                        group: String(valid720[0]),
-                        digits: valid720.slice(1, 7),
-                        rank: rankMatch ? rankMatch[1] : '미당첨',
-                        round: roundMatch ? parseInt(roundMatch[1]) : 0,
-                    });
-                }
-            }
-
-            return { lotto645, lotto720 };
-        }
-    """)
-    return data
+    return {'lotto645': lotto645, 'lotto720': lotto720}
 
 
 def run(playwright: Playwright) -> None:
@@ -296,13 +266,16 @@ def run(playwright: Playwright) -> None:
         if purchases['lotto645']:
             results_645 = []
             for p in purchases['lotto645']:
-                rank = calc_645_rank(p['numbers'], win645['winning'], win645['bonus'])
+                rank = '미당첨'
+                if p['numbers']:
+                    rank = calc_645_rank(p['numbers'], win645['winning'], win645['bonus'])
                 results_645.append({
                     'numbers': p['numbers'],
+                    'raw_numbers': p.get('raw_numbers', ''),
                     'rank': rank,
                 })
             send_645_winning(
-                round_no=win645['round'],
+                round_no=win645['round'] or purchases['lotto645'][0].get('round', 0),
                 winning=win645['winning'],
                 bonus=win645['bonus'],
                 my_games=results_645,

@@ -167,7 +167,11 @@ def send_645_winning(round_no: int, winning: list, bonus: int, my_games: list, b
     # 내 번호와 결과
     lines.append("🎱 <b>내 번호</b>")
     for i, g in enumerate(my_games, 1):
-        nums_str = '  '.join(str(n).zfill(2) for n in g.get('numbers', []))
+        nums = g.get('numbers', [])
+        if nums:
+            nums_str = '  '.join(str(n).zfill(2) for n in nums)
+        else:
+            nums_str = g.get('raw_numbers', '-') or '-'
         rank = g.get('rank', '미당첨')
         rank_label = f"🏆 <b>{rank}등</b>" if rank != '미당첨' else "❌ 미당첨"
         lines.append(f"  <b>{chr(64 + i)}</b>  <code>{nums_str}</code>  {rank_label}")
