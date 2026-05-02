@@ -9,6 +9,8 @@ services:
       - PURCHASE_TARGET=all
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     restart: "no"
 
   # 645만 구매
@@ -21,6 +23,8 @@ services:
       - LOTTO720_GAMES=0
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     restart: "no"
 
   # 720만 구매
@@ -34,6 +38,8 @@ services:
       - MANUAL_NUMBERS=[]
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     restart: "no"
 
   # 당첨 확인 (645 + 720)
@@ -45,6 +51,8 @@ services:
       - CHECK_TARGET=all
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     command: ["python", "src/check_winning.py"]
     restart: "no"
 
@@ -57,6 +65,8 @@ services:
       - CHECK_TARGET=645
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     command: ["python", "src/check_winning.py"]
     restart: "no"
 
@@ -69,5 +79,7 @@ services:
       - CHECK_TARGET=720
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     command: ["python", "src/check_winning.py"]
     restart: "no"

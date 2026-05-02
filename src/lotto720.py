@@ -9,6 +9,7 @@ import time
 from os import environ
 from playwright.sync_api import Playwright, sync_playwright, Page
 from login import login
+import state as state_store
 
 
 def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
@@ -286,6 +287,9 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     # 자동 생성된 번호 추출 (confirm 전)
     numbers = _extract_720_numbers(page, direct_mode)
 
+    # 회차 추출 (게임 페이지의 회차 표시 또는 hidden input)
+    round_no = _extract_720_round(page, direct_mode)
+
     # Confirm selection
     frame.locator(".lotto720_btn_confirm_number").click()
     time.sleep(2)
@@ -376,7 +380,14 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     page.screenshot(path="debug_720_after_purchase.png")
 
     print(f'✅ Lotto 720: {num_games}매 구매 완료! (조: {groups})')
-    return {'success': True, 'groups': groups, 'numbers': numbers, 'details': ''}
+
+    # state 저장 - 당첨 확인 단계에서 자동번호 매칭에 사용
+    try:
+        state_store.save_720(round_no, groups, numbers)
+    except Exception as e:
+        print(f'⚠️ state 저장 실패 (720): {e}')
+
+    return {'success': True, 'groups': groups, 'numbers': numbers, 'round': round_no, 'details': ''}
 
 
 def _remove_pause_popups(page: Page, direct_mode: bool):
@@ -452,145 +463,159 @@ def _select_group(page: Page, group: int, direct_mode: bool) -> bool:
         """)
 
 
-def _extract_720_numbers(page: Page, direct_mode: bool) -> list:
-    """720+ 자동 생성된 번호 추출"""
+_PENSION_NUM_EXTRACT_JS = r"""
+() => {
+    const findDoc = () => {
+        const iframe = document.querySelector('#ifrm_tab');
+        if (iframe && iframe.contentDocument) return iframe.contentDocument;
+        return document;
+    };
+    const doc = findDoc();
+
+    const games = [];
+    const seen = new Set();
+    const addGame = (nums) => {
+        if (nums.length < 6) return;
+        const game = nums.slice(0, 6);
+        const key = game.join('');
+        if (seen.has(key)) return;
+        seen.add(key);
+        games.push(game);
+    };
+
+    // 1) 입력 필드 값에서 추출 (가장 신뢰도 높음)
+    const inputs = [...doc.querySelectorAll('input[type="text"], input[type="hidden"]')]
+        .filter(i => i.name && /num|digit|no/i.test(i.name) && /^\d$/.test(i.value || ''));
+    if (inputs.length >= 6) {
+        // name으로 그룹핑 (예: num1_1..num1_6, num2_1..num2_6)
+        const groups = new Map();
+        inputs.forEach(i => {
+            const m = i.name.match(/(\d+)/g);
+            const key = m ? m.slice(0, -1).join('_') : i.name;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push({ name: i.name, val: Number(i.value) });
+        });
+        for (const [, arr] of groups) {
+            arr.sort((a, b) => a.name.localeCompare(b.name));
+            const digits = arr.map(x => x.val);
+            if (digits.length === 6) addGame(digits);
+        }
+    }
+
+    // 2) "선택된 번호" / "내 번호" 섹션 셀렉터
+    if (games.length === 0) {
+        const containerSelectors = [
+            '#selectNumArea', '.selected_num_area', '.lotto720_my_num',
+            '#myNum', '.my_num', '.selected_list',
+            '.lpcurnum', '.lottonum', '.num_box',
+            '.lotto720_select_num', '.selected_num',
+        ];
+        for (const csel of containerSelectors) {
+            const containers = doc.querySelectorAll(csel);
+            if (!containers.length) continue;
+            for (const container of containers) {
+                let cur = [];
+                container.querySelectorAll('span, li, td, div').forEach(el => {
+                    if (cur.length === 6) return;
+                    const t = (el.textContent || '').trim();
+                    // 자식 텍스트가 있는 leaf 노드만 (중첩 컨테이너 카운트 방지)
+                    if (el.children.length > 0) return;
+                    if (/^\d$/.test(t)) cur.push(Number(t));
+                    if (cur.length === 6) {
+                        addGame(cur);
+                        cur = [];
+                    }
+                });
+            }
+            if (games.length > 0) break;
+        }
+    }
+
+    // 3) 페이지 전체에서 1자리 숫자 leaf 노드 6개씩
+    if (games.length === 0) {
+        let cur = [];
+        doc.querySelectorAll('span, li, td').forEach(el => {
+            if (el.children.length > 0) return;
+            // 그룹/조 선택 영역 제외
+            if (el.closest('.group, .lotto720_btn_group, [class*="group_btn"]')) return;
+            const t = (el.textContent || '').trim();
+            if (/^\d$/.test(t)) {
+                cur.push(Number(t));
+                if (cur.length === 6) {
+                    addGame(cur);
+                    cur = [];
+                }
+            }
+        });
+    }
+
+    // 디버그 정보 동봉
+    const debug = {};
+    if (games.length === 0) {
+        debug.allInputs = [...doc.querySelectorAll('input')]
+            .filter(i => i.value && /^\d$/.test(i.value))
+            .slice(0, 20)
+            .map(i => ({ name: i.name || '', id: i.id || '', value: i.value, cls: (i.className || '').substring(0, 60) }));
+    }
+    return { games, debug };
+}
+"""
+
+
+def _extract_720_round(page: Page, direct_mode: bool) -> int:
+    """720+ 게임 페이지에서 현재 구매 회차 추출."""
     try:
-        js_body = """
-            const games = [];
-            const seen = new Set();
-
-            const addGame = (nums) => {
-                if (nums.length < 6) return;
-                const game = nums.slice(0, 7);
-                const key = game.join('');
-                if (seen.has(key)) return;
-                seen.add(key);
-                games.push(game);
-            };
-
-            // 720+ 페이지에서 자동번호 클릭 후 표시되는 6자리 숫자 박스
-            // 박스 안에 0-9 숫자 한 자리씩 표시됨
-            // 셀렉터 후보: .number, .digit, .lpcnumber, [class*="num"]
-            const boxSelectors = [
-                '.lpcurnum span', '.lpcurnum div',
-                '.lottonum span', '.lottonum div',
-                '.number span', '.digit',
-                'input[name*="num"]',
-                '.ball720', '.lotto720_num',
-                '.num_box span', '.num_box div',
-                '.lotto720_select_num span', '.lotto720_select_num li',
-                '.selected_num span', '.selected_num li',
-                'li.num', 'span.num',
-            ];
-
-            // 각 셀렉터별로 시도
-            for (const sel of boxSelectors) {
-                const elements = doc.querySelectorAll(sel);
-                if (elements.length === 0) continue;
-
-                let current = [];
-                elements.forEach(el => {
-                    const text = el.textContent.trim();
-                    const value = el.value !== undefined ? el.value : text;
-                    const n = parseInt(value);
-                    if (!isNaN(n) && n >= 0 && n <= 9 && value.length === 1) {
-                        current.push(n);
-                        if (current.length === 6) {
-                            addGame(current);
-                            current = [];
-                        }
-                    }
-                });
-                if (games.length > 0) break;
-            }
-
-            // 디버그: 페이지 전체 구조 (게임 추출 실패 시)
-            if (games.length === 0) {
-                const allInputs = [...doc.querySelectorAll('input[type="text"], input[type="hidden"]')]
-                    .filter(i => i.value && i.value.length === 1 && /\\d/.test(i.value))
-                    .map(i => ({ name: i.name, value: i.value, class: i.className }));
-                games._debug_inputs = allInputs.slice(0, 15);
-
-                // 1자리 숫자만 있는 모든 요소 수집
-                const singleDigits = [];
-                doc.querySelectorAll('span, div, li, td').forEach(el => {
-                    const text = el.textContent.trim();
-                    if (text.length === 1 && /^\\d$/.test(text)) {
-                        singleDigits.push({
-                            num: text,
-                            tag: el.tagName,
-                            class: el.className.substring(0, 50),
-                            id: el.id,
-                            parentClass: el.parentElement?.className.substring(0, 50) || ''
-                        });
-                    }
-                });
-                games._debug_digits = singleDigits.slice(0, 20);
-            }
-
-            return games;
-        """
-
-        if direct_mode:
-            numbers = page.evaluate(f"() => {{ const doc = document; {js_body} }}")
-        else:
-            numbers = page.evaluate(f"""
-                () => {{
+        round_no = page.evaluate(r"""
+            () => {
+                const findDoc = () => {
                     const iframe = document.querySelector('#ifrm_tab');
-                    if (!iframe || !iframe.contentDocument) return [];
-                    const doc = iframe.contentDocument;
-                    {js_body}
-                }}
-            """)
+                    if (iframe && iframe.contentDocument) return iframe.contentDocument;
+                    return document;
+                };
+                const doc = findDoc();
 
-        if numbers and isinstance(numbers, list) and len(numbers) > 0:
-            print(f'🎱 추출된 번호: {numbers}')
-            return numbers
-        else:
-            print('⚠️ 720+ 번호 추출 실패 (빈 배열)')
-            # 디버그 정보 출력 (현재 코드에서는 evaluate가 dict를 반환할 수 있게 변경 필요)
-            try:
-                debug_info = page.evaluate("""
-                    () => {
-                        const iframe = document.querySelector('#ifrm_tab');
-                        if (!iframe || !iframe.contentDocument) return null;
-                        const doc = iframe.contentDocument;
+                // hidden input 우선
+                const inputCandidates = [
+                    'input[name="drwNo"]', 'input[name="DRW_NO"]',
+                    'input[name="drawNo"]', 'input[name*="round"]', 'input[name*="Round"]',
+                    'input[name*="ROUND"]',
+                ];
+                for (const sel of inputCandidates) {
+                    const el = doc.querySelector(sel);
+                    const v = el ? parseInt(el.value) : 0;
+                    if (v) return v;
+                }
 
-                        const inputs = [...doc.querySelectorAll('input')]
-                            .filter(i => i.value)
-                            .slice(0, 20)
-                            .map(i => ({
-                                name: i.name || '', id: i.id || '',
-                                value: String(i.value).substring(0, 20),
-                                class: i.className.substring(0, 60)
-                            }));
-
-                        const digits = [];
-                        doc.querySelectorAll('span, div, li, td').forEach(el => {
-                            if (digits.length >= 30) return;
-                            const text = el.textContent.trim();
-                            if (text.length === 1 && /^\\d$/.test(text)) {
-                                digits.push({
-                                    num: text,
-                                    tag: el.tagName,
-                                    class: el.className.substring(0, 50),
-                                    id: el.id || '',
-                                    parentClass: (el.parentElement?.className || '').substring(0, 50)
-                                });
-                            }
-                        });
-
-                        return { inputs, digits };
-                    }
-                """)
-                print(f'🔍 720+ 디버그 inputs: {debug_info["inputs"][:10]}')
-                print(f'🔍 720+ 디버그 digits: {debug_info["digits"][:15]}')
-            except Exception as e:
-                print(f'⚠️ 디버그 정보 수집 실패: {e}')
-            return []
+                // 텍스트에서 "제 N 회"
+                const text = (doc.body && doc.body.innerText) || '';
+                const m = text.match(/제\s*(\d{2,4})\s*회/);
+                return m ? parseInt(m[1]) : 0;
+            }
+        """)
+        return int(round_no or 0)
     except Exception as e:
-        print(f'⚠️ 720+ 번호 추출 오류: {e}')
-        return []
+        print(f'⚠️ 720+ 회차 추출 실패: {e}')
+        return 0
+
+
+def _extract_720_numbers(page: Page, direct_mode: bool) -> list:
+    """720+ 자동 생성된 번호 추출. 자동번호가 DOM에 반영될 때까지 짧게 폴링."""
+    deadline = time.time() + 6
+    last_debug = None
+    while time.time() < deadline:
+        try:
+            result = page.evaluate(_PENSION_NUM_EXTRACT_JS)
+            games = result.get('games', []) if isinstance(result, dict) else []
+            last_debug = result.get('debug') if isinstance(result, dict) else None
+            if games:
+                print(f'🎱 추출된 번호: {games}')
+                return games
+        except Exception as e:
+            print(f'⚠️ 720+ 번호 추출 시도 중 오류: {e}')
+        time.sleep(0.5)
+
+    print(f'⚠️ 720+ 번호 추출 실패 (6초 폴링). 디버그={last_debug}')
+    return []
 
 
 def run(playwright: Playwright, dry_run: bool = False) -> None:
