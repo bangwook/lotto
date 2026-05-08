@@ -225,6 +225,9 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
 
     # Select games with random groups
     groups = []
+    collected_numbers: list = []
+    collected_keys: set = set()
+
     for i in range(num_games):
         group = random.randint(1, 5)
         groups.append(group)
@@ -284,8 +287,26 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
         time.sleep(1.5)
         print(f'✅ 자동번호 {i + 1}/{num_games} 생성')
 
-    # 자동 생성된 번호 추출 (confirm 전)
-    numbers = _extract_720_numbers(page, direct_mode)
+        # 클릭 직후 새 게임 추출 → 매수만큼 누적
+        new_game = _extract_new_720_game(page, collected_keys, timeout=5)
+        if new_game:
+            key = ''.join(str(n) for n in new_game)
+            collected_keys.add(key)
+            collected_numbers.append(new_game)
+            print(f'  🎱 게임 {i + 1}: {new_game} (누적 {len(collected_numbers)}/{num_games})')
+        else:
+            print(f'  ⚠️ 게임 {i + 1} 새 자동번호 추출 실패 (post-loop 보강 시도 예정)')
+
+    # 최종 보강 추출: 누적분에 없는 게임이 DOM에 있으면 추가
+    final_numbers = _extract_720_numbers(page, direct_mode)
+    for g in final_numbers:
+        key = ''.join(str(n) for n in g)
+        if key not in collected_keys:
+            collected_keys.add(key)
+            collected_numbers.append(list(g))
+
+    numbers = collected_numbers[:num_games]
+    print(f'🎱 최종 자동번호 {len(numbers)}/{num_games}게임: {numbers}')
 
     # 회차 추출
     round_no = _extract_720_round(page, direct_mode)
@@ -606,6 +627,26 @@ def _extract_720_numbers(page: Page, direct_mode: bool) -> list:
         time.sleep(0.5)
 
     print(f'⚠️ 720+ 번호 추출 실패 (6초 폴링). 디버그={last_debug}')
+    return []
+
+
+def _extract_new_720_game(page: Page, seen_keys: set, timeout: float = 5) -> list:
+    """자동번호 클릭 직후 호출. seen_keys 에 없는 새 게임 1건을 폴링으로 반환.
+
+    찾지 못하면 빈 리스트 반환. 매수만큼 호출하여 게임을 누적할 때 사용.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            result = page.evaluate(_PENSION_NUM_EXTRACT_JS)
+            games = result.get('games', []) if isinstance(result, dict) else []
+            for g in games:
+                key = ''.join(str(n) for n in g)
+                if key not in seen_keys:
+                    return list(g)
+        except Exception:
+            pass
+        time.sleep(0.4)
     return []
 
 

@@ -227,12 +227,15 @@ def get_720_winning_numbers(page: Page) -> dict:
     urls = [
         "https://dhlottery.co.kr/gameResult.do?method=win720",
         "https://www.dhlottery.co.kr/gameResult.do?method=win720",
+        "https://www.dhlottery.co.kr/gameResult.do?method=byWin720",
         "https://dhlottery.co.kr/gameResult.do?method=byWin720",
+        "https://www.dhlottery.co.kr/gameResult.do?method=pensionWin",
         "https://www.dhlottery.co.kr/store/lottoryResult.do?method=byPension720",
         "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72",
     ]
 
-    for url in urls:
+    last_debug = None
+    for idx, url in enumerate(urls):
         try:
             print(f'🌐 720+ 결과 페이지 시도: {url}')
             page.goto(url, timeout=30000, wait_until="domcontentloaded")
@@ -241,7 +244,13 @@ def get_720_winning_numbers(page: Page) -> dict:
             except Exception:
                 pass
             time.sleep(2)
-            page.screenshot(path=f"debug_720_winning_{urls.index(url)}.png")
+            page.screenshot(path=f"debug_720_winning_{idx}.png")
+
+            # errorPage 리다이렉트면 즉시 다음 URL
+            cur = page.url.lower()
+            if 'errorpage' in cur or '/error' in cur:
+                print(f'  ↪ 오류 페이지 리다이렉트({page.url}) → 다음 URL')
+                continue
 
             extracted = page.evaluate(_PENSION_EXTRACT_JS)
             if extracted and extracted.get('winning') and len(extracted['winning']) >= 6:
@@ -253,11 +262,20 @@ def get_720_winning_numbers(page: Page) -> dict:
                 print(f'✅ 720+ 당첨번호 추출 성공: {extracted}')
                 return extracted
             else:
-                print(f'  ⚠️ 추출 실패 또는 데이터 부족: {extracted}')
+                last_debug = extracted
+                # 상세 로그: 페이지가 어떻게 보였는지
+                try:
+                    title = page.title() or ''
+                    body_preview = page.evaluate(
+                        "() => (document.body && document.body.innerText || '').substring(0, 300)"
+                    )
+                    print(f'  ⚠️ 추출 실패. title="{title}", body 미리보기: {body_preview[:200]}')
+                except Exception:
+                    print(f'  ⚠️ 추출 실패: {extracted}')
         except Exception as e:
             print(f'  ⚠️ 720+ {url} 실패: {e}')
 
-    print('❌ 720+ 당첨번호 모든 URL 실패')
+    print(f'❌ 720+ 당첨번호 모든 URL 실패. 마지막 디버그: {last_debug}')
     return {'round': 0, 'group': '', 'winning': [], 'bonus': []}
 
 
@@ -266,7 +284,9 @@ _PENSION_EXTRACT_JS = r"""
 () => {
     // iframe이 있으면 우선 시도, 없으면 현재 document 사용
     const docs = [];
-    const iframe = document.querySelector('#ifrm_tab, iframe[src*="pension720"], iframe[src*="LP72"]');
+    const iframe = document.querySelector(
+        '#ifrm_tab, iframe[src*="pension720"], iframe[src*="LP72"], iframe[src*="720"]'
+    );
     if (iframe && iframe.contentDocument) docs.push(iframe.contentDocument);
     docs.push(document);
 
@@ -279,34 +299,40 @@ _PENSION_EXTRACT_JS = r"""
         const roundM = text.match(/제\s*(\d{2,4})\s*회/);
         if (roundM) round = parseInt(roundM[1]);
 
-        // 1등 패턴: "N조 D D D D D D" 또는 "N조 DDDDDD"
         let group = '';
         let winning = [];
         const cleanText = text.replace(/\s+/g, ' ');
 
-        // 패턴 1: "1등 ... 조 ... 번호"
-        const win1Match = cleanText.match(/(?:1등|당첨번호)[\s\S]{0,30}?([1-5])\s*조[\s,]*([\d\s]{6,30})/);
+        // 패턴 1: "1등|당첨번호" 인근에 "N조 6digits" (간격/연결 모두 허용)
+        let win1Match = cleanText.match(
+            /(?:1등|당첨\s*번호|1등번호|당첨\s*번호)[^\n]{0,120}?([1-5])\s*조[^\d]{0,15}((?:\d[\s, ]*){6,8})/
+        );
         if (win1Match) {
             group = win1Match[1];
             const digits = win1Match[2].replace(/[^\d]/g, '').slice(0, 6);
             if (digits.length === 6) winning = [...digits].map(Number);
         }
 
-        // 패턴 2: 단순 "N조 6자리"
+        // 패턴 2: "N조 6digits" (당첨/1등 키워드 없이, 가장 먼저 나오는 6자리)
         if (!winning.length) {
-            const m = cleanText.match(/([1-5])\s*조\s+(\d)\s*(\d)\s*(\d)\s*(\d)\s*(\d)\s*(\d)/);
+            const m = cleanText.match(/([1-5])\s*조[^\d]{0,10}((?:\d[\s, ]*){6,})/);
             if (m) {
-                group = m[1];
-                winning = [m[2], m[3], m[4], m[5], m[6], m[7]].map(Number);
+                const digits = m[2].replace(/[^\d]/g, '').slice(0, 6);
+                if (digits.length === 6) {
+                    group = m[1];
+                    winning = [...digits].map(Number);
+                }
             }
         }
 
-        // 패턴 3: 라벨 박스 셀렉터 - 회차 페이지의 일반적 구조
+        // 패턴 3: 셀렉터 기반 ball 추출
         if (!winning.length) {
             const ballEls = doc.querySelectorAll(
                 '.win_result .num span, .num720 span, .pension_num span, ' +
                 'span[class*="ball720"], span[class*="num720"], .winnum span, ' +
-                '.lpwinnum span, .pension_winnum span'
+                '.lpwinnum span, .pension_winnum span, ' +
+                '.win720 .num span, .win720 span, .winning_num span, ' +
+                '.lottoNum720 span, .pen_winnum span'
             );
             const digits = [];
             ballEls.forEach(el => {
@@ -316,7 +342,9 @@ _PENSION_EXTRACT_JS = r"""
             if (digits.length >= 6) {
                 winning = digits.slice(0, 6);
                 // 조 추출 시도
-                const groupEl = doc.querySelector('.group, .win_group, [class*="group"]');
+                const groupEl = doc.querySelector(
+                    '.group, .win_group, [class*="group"], .lp_group, .winGroup'
+                );
                 if (groupEl) {
                     const gm = (groupEl.textContent || '').match(/([1-5])\s*조/);
                     if (gm) group = gm[1];
@@ -324,13 +352,28 @@ _PENSION_EXTRACT_JS = r"""
             }
         }
 
-        // 2등 보너스 (각 조 동일 6자리, 조만 다름) - 패턴: "2등 ... 6자리"
+        // 패턴 4: 단일 6자리 시퀀스 (마지막 안전망) - "추첨" 또는 "당첨" 인근의 6자리
+        if (!winning.length) {
+            const m = cleanText.match(
+                /(?:추첨|당첨|1등|결과)[^\d]{0,80}((?:\d[\s, ]*){6,8})/
+            );
+            if (m) {
+                const digits = m[1].replace(/[^\d]/g, '').slice(0, 6);
+                if (digits.length === 6) winning = [...digits].map(Number);
+            }
+        }
+
+        // 2등 보너스 (각 조 동일 6자리, 조만 다름)
         const bonus = [];
         if (winning.length === 6) {
-            const win2Match = cleanText.match(/2등[\s\S]{0,40}?(\d)\s*(\d)\s*(\d)\s*(\d)\s*(\d)\s*(\d)/);
+            const win2Match = cleanText.match(
+                /2등[^\n]{0,60}?((?:\d[\s, ]*){6,8})/
+            );
             if (win2Match) {
-                for (let i = 1; i <= 6; i++) bonus.push(Number(win2Match[i]));
-            } else if (winning.length === 6) {
+                const d2 = win2Match[1].replace(/[^\d]/g, '').slice(0, 6);
+                if (d2.length === 6) for (const c of d2) bonus.push(Number(c));
+            }
+            if (!bonus.length) {
                 // 2등은 1등과 번호 동일, 조만 모든 조이므로 winning 그대로 사용
                 bonus.push(...winning);
             }

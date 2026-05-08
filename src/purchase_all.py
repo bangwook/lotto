@@ -102,6 +102,81 @@ def extract_game_numbers(page: Page) -> list:
         return []
 
 
+def _extract_645_selected_games(page: Page, expected: int = 0) -> list:
+    """645 구매 직전 선택 영역에서 게임 번호 추출.
+
+    - 자동/수동 모두 `#btnSelectNum` 클릭 후 선택 영역에 누적되므로 구매 화면에서
+      직접 보이는 가장 신뢰도 높은 데이터 소스.
+    - `expected` 만큼 모일 때까지 짧게 폴링.
+    """
+    deadline = time.time() + 5
+    last_games: list = []
+    while time.time() < deadline:
+        try:
+            games = page.evaluate("""
+                () => {
+                    const games = [];
+                    const seen = new Set();
+                    const addGame = (nums) => {
+                        if (nums.length < 6) return;
+                        const game = nums.slice(0, 6);
+                        const key = game.join(',');
+                        if (seen.has(key)) return;
+                        seen.add(key);
+                        games.push(game);
+                    };
+
+                    // 1) 선택 영역 셀렉터의 행 단위 추출
+                    const containerSelectors = [
+                        '#selectNumArea', '#reportRow', '#tblNum',
+                        '.tbl_select', '.tbl_data', '.tbl_display',
+                        '#selectNum', '.selectNumList', '.select_box_num',
+                        '.selectedNumBox', '.lpcurnum', '.selected_list',
+                    ];
+                    const containers = document.querySelectorAll(containerSelectors.join(', '));
+                    for (const c of containers) {
+                        const rows = c.querySelectorAll('tr, li, .item, .game_item');
+                        for (const row of rows) {
+                            const nums = [];
+                            row.querySelectorAll('span[class*="ball"]').forEach(el => {
+                                const n = parseInt(el.textContent.trim());
+                                if (!isNaN(n) && n >= 1 && n <= 45) nums.push(n);
+                            });
+                            if (nums.length >= 6) addGame(nums);
+                        }
+                    }
+
+                    // 2) 컨테이너 단위 ball 6개씩 묶기
+                    if (games.length === 0) {
+                        for (const c of containers) {
+                            let cur = [];
+                            c.querySelectorAll('span[class*="ball"]').forEach(el => {
+                                const n = parseInt(el.textContent.trim());
+                                if (!isNaN(n) && n >= 1 && n <= 45) {
+                                    cur.push(n);
+                                    if (cur.length === 6) {
+                                        addGame(cur);
+                                        cur = [];
+                                    }
+                                }
+                            });
+                            if (games.length > 0) break;
+                        }
+                    }
+
+                    return games;
+                }
+            """) or []
+            if isinstance(games, list) and games:
+                last_games = games
+                if expected and len(games) >= expected:
+                    return games[:expected]
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return last_games
+
+
 def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     """로또 6/45를 구매합니다. 결과를 dict로 반환합니다."""
     page.goto("https://ol.dhlottery.co.kr/olotto/game/game645.do", timeout=60000, wait_until="domcontentloaded")
@@ -195,6 +270,11 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
         msg = f'결제 금액 불일치 (예상: {expected_amount}, 표시: {payment_amount})'
         print(f'❌ Error: {msg}')
         return {'success': False, 'numbers': [], 'details': msg}
+
+    # 구매 직전 선택 영역에서 매수만큼의 번호를 사전 추출 (가장 신뢰도 높음)
+    # 영수증/구매내역 추출이 부족할 때의 보강 데이터로 사용
+    pre_purchase_numbers: list = _extract_645_selected_games(page, expected=total_games)
+    print(f'🎱 구매 전 선택 번호 추출: {len(pre_purchase_numbers)}/{total_games}게임 → {pre_purchase_numbers}')
 
     # Purchase
     page.click("#btnBuy")
@@ -409,6 +489,24 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
                 print(f'🔍 구매내역 ball 디버그: {json.dumps(debug, ensure_ascii=False)}')
         except Exception as e:
             print(f'⚠️ 구매내역 페이지 접근 실패: {e}')
+
+    # 매수만큼 채우지 못했다면 사전 추출(pre_purchase_numbers)로 보강.
+    # 이 단계의 게임들은 구매 화면에서 직접 본 선택 영역이라 신뢰도가 가장 높음.
+    if (not numbers) or (len(numbers) < total_games):
+        if pre_purchase_numbers and len(pre_purchase_numbers) >= total_games:
+            print(f'🎱 사전 추출 결과로 대체 ({len(pre_purchase_numbers)}게임): {pre_purchase_numbers}')
+            numbers = pre_purchase_numbers[:total_games]
+        elif pre_purchase_numbers:
+            # 부족분만 보강
+            existing_keys = {','.join(str(n) for n in g) for g in (numbers or [])}
+            merged = list(numbers or [])
+            for g in pre_purchase_numbers:
+                key = ','.join(str(n) for n in g)
+                if key not in existing_keys:
+                    existing_keys.add(key)
+                    merged.append(list(g))
+            numbers = merged[:total_games]
+            print(f'🎱 사전 추출 보강 후 {len(numbers)}게임: {numbers}')
 
     if not numbers and manual_numbers:
         numbers = [list(game) for game in manual_numbers]
