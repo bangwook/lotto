@@ -536,18 +536,34 @@ def run(playwright: Playwright) -> None:
         win645 = {'round': 0, 'winning': [], 'bonus': None}
         win720 = {'round': 0, 'group': '', 'winning': [], 'bonus': []}
 
+        # 모든 게임이 '미추첨' 상태면 당첨번호 조회 자체를 생략 (추첨 전)
+        all_pending_645 = bool(purchases['lotto645']) and all(
+            p.get('rank') == '미추첨' for p in purchases['lotto645']
+        )
+        all_pending_720 = bool(purchases['lotto720']) and all(
+            p.get('rank') == '미추첨' for p in purchases['lotto720']
+        )
+
         if check_target in ('all', '645'):
-            print("=" * 40)
-            print("🎯 645 당첨번호 조회...")
-            ledger_round_645 = purchases['lotto645'][0].get('round', 0) if purchases['lotto645'] else 0
-            win645 = get_645_winning_numbers(page, draw_no=ledger_round_645)
-            print(f"  {win645['round']}회: {win645['winning']} + 보너스 {win645['bonus']}")
+            if all_pending_645:
+                print("=" * 40)
+                print("⏳ 645 모든 게임이 미추첨 → 당첨번호 조회 생략")
+            else:
+                print("=" * 40)
+                print("🎯 645 당첨번호 조회...")
+                ledger_round_645 = purchases['lotto645'][0].get('round', 0) if purchases['lotto645'] else 0
+                win645 = get_645_winning_numbers(page, draw_no=ledger_round_645)
+                print(f"  {win645['round']}회: {win645['winning']} + 보너스 {win645['bonus']}")
 
         if check_target in ('all', '720'):
-            print("=" * 40)
-            print("🎯 720+ 당첨번호 조회...")
-            win720 = get_720_winning_numbers(page)
-            print(f"  {win720['round']}회: {win720['group']}조 {win720['winning']}")
+            if all_pending_720:
+                print("=" * 40)
+                print("⏳ 720+ 모든 게임이 미추첨 → 당첨번호 조회 생략")
+            else:
+                print("=" * 40)
+                print("🎯 720+ 당첨번호 조회...")
+                win720 = get_720_winning_numbers(page)
+                print(f"  {win720['round']}회: {win720['group']}조 {win720['winning']}")
 
         print("=" * 40)
         print("Checking balance...")

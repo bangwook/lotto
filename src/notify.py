@@ -150,14 +150,23 @@ def send_error_notification(script: str, error: str):
 
 def send_645_winning(round_no: int, winning: list, bonus: int, my_games: list, balance: int):
     """645 당첨 확인 결과를 Telegram으로 전송"""
-    has_won = any(g.get('rank') != '미당첨' for g in my_games)
-    icon = "🎉" if has_won else "😢"
-    title = f"{icon} 로또 6/45 당첨 확인 ({round_no}회차)"
+    all_pending = bool(my_games) and all(g.get('rank') == '미추첨' for g in my_games)
+    has_won = any(g.get('rank') not in ('미당첨', '미추첨') for g in my_games)
+
+    if all_pending:
+        icon = "🕐"
+        title = f"{icon} 로또 6/45 추첨 전 ({round_no}회차)"
+    else:
+        icon = "🎉" if has_won else "😢"
+        title = f"{icon} 로또 6/45 당첨 확인 ({round_no}회차)"
 
     lines = [f"<b>{title}</b>", ""]
 
-    # 당첨번호
-    if winning:
+    # 당첨번호 - 미추첨이 아닐 때만
+    if all_pending:
+        lines.append("🕐 <b>추첨 전</b> — 추첨일 이후 다시 조회됩니다")
+        lines.append("")
+    elif winning:
         win_str = '  '.join(str(n).zfill(2) for n in winning)
         lines.append(f"🎯 <b>당첨번호:</b> <code>{win_str}</code>")
         if bonus:
@@ -173,7 +182,12 @@ def send_645_winning(round_no: int, winning: list, bonus: int, my_games: list, b
         else:
             nums_str = g.get('raw_numbers', '-') or '-'
         rank = g.get('rank', '미당첨')
-        rank_label = f"🏆 <b>{rank}등</b>" if rank != '미당첨' else "❌ 미당첨"
+        if rank == '미추첨':
+            rank_label = "🕐 미추첨"
+        elif rank != '미당첨':
+            rank_label = f"🏆 <b>{rank}등</b>"
+        else:
+            rank_label = "❌ 미당첨"
         lines.append(f"  <b>{chr(64 + i)}</b>  <code>{nums_str}</code>  {rank_label}")
 
     lines.extend([
@@ -186,14 +200,23 @@ def send_645_winning(round_no: int, winning: list, bonus: int, my_games: list, b
 
 def send_720_winning(round_no: int, win_group: str, win_digits: list, my_games: list, balance: int):
     """720+ 당첨 확인 결과를 Telegram으로 전송"""
-    has_won = any(g.get('rank') != '미당첨' for g in my_games)
-    icon = "🎉" if has_won else "😢"
-    title = f"{icon} 연금복권 720+ 당첨 확인 ({round_no}회차)"
+    all_pending = bool(my_games) and all(g.get('rank') == '미추첨' for g in my_games)
+    has_won = any(g.get('rank') not in ('미당첨', '미추첨') for g in my_games)
+
+    if all_pending:
+        icon = "🕐"
+        title = f"{icon} 연금복권 720+ 추첨 전 ({round_no}회차)"
+    else:
+        icon = "🎉" if has_won else "😢"
+        title = f"{icon} 연금복권 720+ 당첨 확인 ({round_no}회차)"
 
     lines = [f"<b>{title}</b>", ""]
 
-    # 당첨번호
-    if win_digits:
+    # 당첨번호 - 미추첨이 아닐 때만
+    if all_pending:
+        lines.append("🕐 <b>추첨 전</b> — 추첨일 이후 다시 조회됩니다")
+        lines.append("")
+    elif win_digits:
         digits_str = ' '.join(str(n) for n in win_digits)
         lines.append(f"🎯 <b>당첨번호:</b> {win_group}조 <code>{digits_str}</code>")
         lines.append("")
@@ -204,7 +227,12 @@ def send_720_winning(round_no: int, win_group: str, win_digits: list, my_games: 
         digits_str = ' '.join(str(n) for n in g.get('digits', []))
         group = g.get('group', '?')
         rank = g.get('rank', '미당첨')
-        rank_label = f"🏆 <b>{rank}등</b>" if rank != '미당첨' else "❌ 미당첨"
+        if rank == '미추첨':
+            rank_label = "🕐 미추첨"
+        elif rank != '미당첨':
+            rank_label = f"🏆 <b>{rank}등</b>"
+        else:
+            rank_label = "❌ 미당첨"
         lines.append(f"  <b>{chr(64 + i)}</b>  {group}조 <code>{digits_str}</code>  {rank_label}")
 
     lines.extend([
