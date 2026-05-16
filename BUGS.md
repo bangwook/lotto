@@ -54,11 +54,24 @@
 
 ---
 
+## BUG-5. Dockerfile `apt-key` 사용으로 NAS 빌드 실패 → 2026-05-15 22:00 정기 구매 전체 실패
+
+- **증상**: Synology 작업 스케줄러로 `docker-compose up --build lotto-all` 실행 시 빌드 단계 `[lotto-all 3/8]` 에서 exit code 127, `/bin/sh: 1: apt-key: not found` 로 종료. 컨테이너가 시작조차 안 되어 Telegram 알림 미발송.
+- **재현**:
+  1. `docker-compose up --build lotto-all`
+  2. apt 패키지 설치 단계 진행 후 `apt-key add -` 호출 시점에 실패
+- **원인**: `addc574 chore(docker): Google Chrome stable 설치 추가` 커밋에서 `apt-key add -` 사용. python:3.9-slim 베이스가 Debian 13(trixie) 로 업그레이드되면서 `apt-key` 가 제거됨. 게다가 코드(`purchase_all.py`, `check_winning.py`)에 `channel="chrome"` 설정이 없어 설치한 google-chrome-stable 자체가 미사용 상태였음.
+- **수정**: Dockerfile 에서 google-chrome 설치 블록 전체 제거. `xvfb/xauth/fonts-noto-cjk/ca-certificates` 만 남김. Playwright 번들 chromium 그대로 사용.
+- **영향 범위**: `Dockerfile`. 차후 실 Chrome 도입 필요 시 `apt-key` 대신 `/etc/apt/keyrings/` + `signed-by=` 방식으로 재추가하고 코드에 `channel="chrome"` 도 함께 설정해야 함.
+
+---
+
 ## 작업 우선순위
 
-1. BUG-1, BUG-3 (720 자동번호 N매 추출): `src/lotto720.py`
+1. BUG-5 (Dockerfile apt-key): 수정 완료 → NAS `docker-compose build --no-cache lotto-all` 후 재실행 검증
+2. BUG-1, BUG-3 (720 자동번호 N매 추출): `src/lotto720.py`
    - 자동번호 클릭 직후마다 직전 게임을 추출해 누적 → 추출 실패 케이스 제거
    - 사후 추출 실패 시에는 누적 결과를 그대로 사용
-2. BUG-2 (720 당첨 조회): `src/check_winning.py`
+3. BUG-2 (720 당첨 조회): `src/check_winning.py`
    - 결과 페이지 실제 DOM/응답을 디버그 스크린샷으로 재확인 후 셀렉터·정규식 보강
    - 가능하면 JSON API fallback 추가
