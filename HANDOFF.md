@@ -16,16 +16,9 @@
 - **권한**: `sudo -i` 필요 (root 전환)
 - **git 미설치** → 코드 업데이트는 `wget` 사용
 
-### 코드 업데이트 명령어
+### 코드 업데이트 명령어 (한 줄, NAS bash에 붙여넣기)
 ```bash
-cd /volume1/docker/lotto/lotto-main && \
-for f in src/check_winning.py src/notify.py src/purchase_all.py src/lotto720.py src/login.py; do
-  wget -O $f https://raw.githubusercontent.com/bangwook/lotto/main/$f
-done
-wget -O Dockerfile https://raw.githubusercontent.com/bangwook/lotto/main/Dockerfile
-wget -O entrypoint.sh https://raw.githubusercontent.com/bangwook/lotto/main/entrypoint.sh
-wget -O docker-compose.yml https://raw.githubusercontent.com/bangwook/lotto/main/docker-compose.yml
-chmod +x entrypoint.sh
+cd /volume1/docker/lotto/lotto-main && for f in src/check_winning.py src/notify.py src/purchase_all.py src/lotto720.py src/login.py Dockerfile entrypoint.sh docker-compose.yml; do wget -O $f https://raw.githubusercontent.com/bangwook/lotto/main/$f; done && chmod +x entrypoint.sh
 ```
 
 ### Docker 서비스
