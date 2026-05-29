@@ -225,6 +225,8 @@ def calc_645_rank(my_numbers: list, winning: list, bonus: int) -> str:
 def get_720_winning_numbers(page: Page) -> dict:
     """720+ 최근 회차 당첨번호 조회. 다중 URL을 시도하고 본문 텍스트에서 패턴 매칭."""
     urls = [
+        # 모바일 결과 페이지 - HTML 단순해 파싱 유리, 최우선
+        "https://m.dhlottery.co.kr/gameResult.do?method=win720",
         "https://dhlottery.co.kr/gameResult.do?method=win720",
         "https://www.dhlottery.co.kr/gameResult.do?method=win720",
         "https://www.dhlottery.co.kr/gameResult.do?method=byWin720",
@@ -263,13 +265,18 @@ def get_720_winning_numbers(page: Page) -> dict:
                 return extracted
             else:
                 last_debug = extracted
-                # 상세 로그: 페이지가 어떻게 보였는지
+                # 상세 로그 + 전체 body 텍스트를 파일로 저장 (실제 DOM 구조 확인용)
                 try:
                     title = page.title() or ''
-                    body_preview = page.evaluate(
-                        "() => (document.body && document.body.innerText || '').substring(0, 300)"
+                    body_full = page.evaluate(
+                        "() => (document.body && document.body.innerText || '')"
                     )
-                    print(f'  ⚠️ 추출 실패. title="{title}", body 미리보기: {body_preview[:200]}')
+                    print(f'  ⚠️ 추출 실패. title="{title}", body 미리보기: {body_full[:200]}')
+                    try:
+                        with open(f"debug_720_winning_body_{idx}.txt", "w", encoding="utf-8") as f:
+                            f.write(f"URL: {page.url}\nTITLE: {title}\n\n{body_full}")
+                    except Exception:
+                        pass
                 except Exception:
                     print(f'  ⚠️ 추출 실패: {extracted}')
         except Exception as e:

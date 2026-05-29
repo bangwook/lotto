@@ -66,6 +66,23 @@
 
 ---
 
+## 2026-05-29 재보고 (사용자) + 근본 원인 분석
+
+사용자 재보고: ① 720 당첨 확인 실패(BUG-2 지속), ② 645 구매 후 알림에 번호가 **1게임만** 전송됨(BUG-4 지속). commit `2969681` 의 DOM 셀렉터 보강만으로는 해결 안 됨.
+
+### BUG-4 근본 원인 (645 알림 번호 1개)
+- 645 자동 구매의 **권위 있는 번호 소스**는 구매 AJAX 응답 `https://ol.dhlottery.co.kr/olotto/game/execBuy.do` 의 `result.arrGameChoiceNum` 배열임. 각 원소 = 게임 1건(번호 6개 + 끝자리 모드숫자 1=수동/2=반자동/3=자동). 매수만큼 항상 정확히 들어옴.
+- 현재 코드는 이 응답을 **전혀 안 보고** 영수증 팝업 DOM 스크래핑에만 의존.
+- 영수증 추출의 1차(row) 패스 셀렉터에 `'table tr'`, `'#tblNum tr'`, `.tbl_display tr` 등 **페이지 전역 테이블**이 포함됨 → 게임 페이지에 남아있는 무관한 테이블(예: 최근 당첨번호 위젯) 한 행(6볼)을 잡아 `games=1` 로 조기 확정 → 더 정확한 컨테이너/전역 패스가 `if games.length===0` 가드로 **스킵**됨 → 1게임만 반환.
+- **수정**: `buy_lotto645` 에서 `#btnBuy` 클릭 전 `execBuy.do` 응답을 캡처 → `arrGameChoiceNum` 파싱(권위 소스). `len==total_games` & 각 게임 6개 1~45 검증 통과 시 우선 사용. 미달 시에만 기존 DOM/ledger/pre_purchase fallback. (검증 게이트로 절대 악화 없음)
+
+### BUG-2 근본 원인 (720 당첨 조회)
+- 결과 페이지는 `https://(www.)dhlottery.co.kr/gameResult.do?method=win720` (예: 296회 `1조667975` = 1조 + 667975). 모바일 `https://m.dhlottery.co.kr/gameResult.do?method=win720` 가 HTML 단순해 파싱 유리.
+- 정규식 자체는 `N조DDDDDD` 콤팩트 포맷을 처리 가능해 보이나, 후보 URL/세션/리다이렉트 또는 실제 DOM 차이로 추출 0건. 라이브 DOM 미확인이 근본 블로커(메모리 기재대로).
+- **수정**: 모바일 win720 URL 우선 추가 + 추출 실패 시 body 텍스트를 `debug_720_winning_body_*.txt` 로 저장(다음 실행에서 실제 구조 확인). 여전히 실패하면 NAS 디버그 산출물 필요.
+
+---
+
 ## 작업 우선순위
 
 1. BUG-5 (Dockerfile apt-key): 수정 완료 → NAS `docker-compose build --no-cache lotto-all` 후 재실행 검증

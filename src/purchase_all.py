@@ -177,6 +177,50 @@ def _extract_645_selected_games(page: Page, expected: int = 0) -> list:
     return last_games
 
 
+def _parse_execbuy_games(raw_text: str) -> tuple:
+    """execBuy.do 응답(JSON)에서 구매 게임 번호와 회차를 추출.
+
+    `result.arrGameChoiceNum`: 게임 1건당 문자열 1개. 번호 6개 + 끝자리 모드숫자
+    (1=수동/2=반자동/3=자동). 포맷 변종(공백·슬롯문자·콤마·패딩연결) 모두 방어적으로 파싱.
+
+    Returns:
+        tuple: (games: list[list[int]], round_no: int)
+    """
+    if not raw_text:
+        return [], 0
+    try:
+        data = json.loads(raw_text)
+    except Exception:
+        return [], 0
+    result = data.get('result') if isinstance(data, dict) else None
+    if not isinstance(result, dict):
+        return [], 0
+    arr = result.get('arrGameChoiceNum') or []
+    games = []
+    for line in arr:
+        s = str(line).strip()
+        if not s:
+            continue
+        body = s[:-1]  # 끝자리 모드숫자 제거
+        toks = re.findall(r'\d+', body)
+        nums = []
+        if len(toks) >= 6 and all(len(t) <= 2 for t in toks[:6]):
+            # 공백/콤마/슬롯문자 구분 포맷 ("A 01 02 ... 06")
+            nums = [int(t) for t in toks[:6]]
+        else:
+            # 패딩 연결 포맷 ("010203040506")
+            digits = re.sub(r'\D', '', body)
+            if len(digits) >= 12:
+                nums = [int(digits[i:i + 2]) for i in range(0, 12, 2)]
+        if len(nums) == 6 and all(1 <= n <= 45 for n in nums):
+            games.append(nums)
+    try:
+        round_no = int(result.get('buyRound') or 0)
+    except (TypeError, ValueError):
+        round_no = 0
+    return games, round_no
+
+
 def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     """로또 6/45를 구매합니다. 결과를 dict로 반환합니다."""
     page.goto("https://ol.dhlottery.co.kr/olotto/game/game645.do", timeout=60000, wait_until="domcontentloaded")
@@ -276,6 +320,18 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     pre_purchase_numbers: list = _extract_645_selected_games(page, expected=total_games)
     print(f'🎱 구매 전 선택 번호 추출: {len(pre_purchase_numbers)}/{total_games}게임 → {pre_purchase_numbers}')
 
+    # 구매 AJAX 응답(execBuy.do) 캡처 - 가장 권위 있는 번호 소스
+    captured_buy: dict = {}
+
+    def _capture_execbuy(response):
+        try:
+            if 'execBuy.do' in response.url:
+                captured_buy['raw'] = response.text()
+        except Exception:
+            pass
+
+    page.on('response', _capture_execbuy)
+
     # Purchase
     page.click("#btnBuy")
 
@@ -328,9 +384,6 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
                 '#popReceipt tr', '.pop_data tr', '.popup_data tr',
                 '#report tr', '#reportRow tr',
                 '.tbl_data tbody tr', '.tbl_data tr',
-                '#tblNum tr', '#tblNum tbody tr',
-                '.tbl_display tr', '.tbl_display tbody tr',
-                'table tr',
                 'li.game_item', '.selected_list li', '.game_list li',
             ];
             const rows = document.querySelectorAll(rowSelectors.join(', '));
@@ -395,6 +448,16 @@ def buy_lotto645(page: Page, auto_games: int, manual_numbers: list) -> dict:
     """) or {}
     numbers = receipt.get('games', []) if isinstance(receipt, dict) else []
     receipt_round = receipt.get('round', 0) if isinstance(receipt, dict) else 0
+
+    # execBuy.do 응답이 매수만큼 정확히 잡혔으면 권위 소스로 우선 사용 (DOM 스크래핑보다 신뢰도 높음)
+    exec_games, exec_round = _parse_execbuy_games(captured_buy.get('raw', ''))
+    if exec_games:
+        print(f'🎱 execBuy 응답에서 추출 ({len(exec_games)}게임): {exec_games}')
+    if len(exec_games) >= total_games:
+        numbers = exec_games[:total_games]
+        if exec_round:
+            receipt_round = exec_round
+        print('✅ execBuy 권위 소스 사용 - DOM/ledger fallback 생략')
 
     if numbers and len(numbers) >= total_games:
         print(f'🎱 추출된 번호 ({len(numbers)}게임): {numbers}')
