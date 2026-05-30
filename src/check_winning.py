@@ -512,6 +512,13 @@ def get_purchases(page: Page) -> dict:
     body_text = page.inner_text('body')
     lines = [ln.strip() for ln in body_text.split('\n')]
 
+    # 다매(2매 이상) 구매가 구매내역에 어떻게 라인 분할되는지 확인용 덤프
+    try:
+        with open("debug_ledger_body.txt", "w", encoding="utf-8") as f:
+            f.write('\n'.join(f'{i}: {ln}' for i, ln in enumerate(lines)))
+    except Exception:
+        pass
+
     lotto720 = []
     lotto645 = []
 
@@ -648,20 +655,25 @@ def run(playwright: Playwright) -> None:
         sent_645 = False
         if check_target in ('all', '645') and purchases['lotto645']:
             results_645 = []
-            ledger_round = purchases['lotto645'][0].get('round', 0)
+            ledger_entries = purchases['lotto645']
+            ledger_round = ledger_entries[0].get('round', 0)
             saved_numbers = state_store.load_645(ledger_round)
             if saved_numbers:
                 print(f'📂 state에서 645 번호 복원: {len(saved_numbers)}게임 (round={ledger_round})')
             else:
                 print(f'⚠️ state에 645 round={ledger_round} 데이터 없음 - raw 텍스트로 표시')
 
-            for idx, p in enumerate(purchases['lotto645']):
+            # 구매 매수 전체 표시: 구매내역 항목 수와 state 저장 게임 수 중 큰 값 기준.
+            # (구매 시 state 에 매수만큼 저장되므로, ledger 가 1행으로 묶여도 모두 표시)
+            base_rank = ledger_entries[0].get('rank', '미당첨')
+            game_count = max(len(ledger_entries), len(saved_numbers))
+            print(f'🎫 645 표시 게임 수: {game_count} (ledger={len(ledger_entries)}, state={len(saved_numbers)})')
+            for idx in range(game_count):
+                p = ledger_entries[idx] if idx < len(ledger_entries) else {}
                 # state 우선 사용 (ledger raw 텍스트는 자릿수 패딩 없는 발권 코드)
-                numbers = p['numbers']
-                if not numbers and idx < len(saved_numbers):
-                    numbers = saved_numbers[idx]
+                numbers = p.get('numbers') or (saved_numbers[idx] if idx < len(saved_numbers) else [])
 
-                rank = p.get('rank', '미당첨')
+                rank = p.get('rank', base_rank)
                 if rank in ('미당첨', '미추첨') and numbers and win645['winning']:
                     calc_rank = calc_645_rank(numbers, win645['winning'], win645['bonus'])
                     if calc_rank != '미당첨':

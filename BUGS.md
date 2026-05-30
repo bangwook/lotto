@@ -102,6 +102,12 @@
 - **수정 1차**: `_fetch_645_api_direct()` 추가 — 브라우저 밖 urllib 직접 호출(UA/Referer/X-Requested-With 헤더). 한국 IP(NAS)에서 정상 JSON 기대. 실패 시 ctype/body 일부 로그. 페이지 fetch 실패 로그도 body 스니펫 출력하도록 보강.
 - **남은 확인**: 직접 호출도 실패하면 로그의 `body[:120]` 로 차단/신경로 판단. 추첨일(토 20:45) 이전 실행이면 미발표가 정상.
 
+### BUG-9. 645 2매 구매했는데 당첨확인에 1게임만 표시
+- **증상**: 645 2매 구매 후 `lotto-check` 에 1게임만 조회됨. 로그 `645: 1게임`, `state 복원 1게임`.
+- **원인**: ① 표시 루프가 `purchases['lotto645']`(구매내역 항목 수) 기준 → 다매가 1행으로 묶이면 1개만. ② round 1226 state 에 1게임만 저장(구매가 execBuy 수정 전 구코드로 실행됐을 가능성, 또는 execBuy 게이트 미통과 fallback).
+- **수정 1차**: 표시 루프를 `max(len(ledger), len(state))` 기준으로 변경 → state 에 매수만큼 있으면 전부 표시. `get_purchases` 에 `debug_ledger_body.txt` 덤프 추가(다매 라인 구조 확인용).
+- **남은 확인**: round 1226 은 state 가 1게임뿐이라 2번째 실제 번호 복구 불가(구매 시점 저장 누락). `state/last_purchase.json` 내용과 다음 구매(execBuy 적용 후) 결과로 검증 필요.
+
 ---
 
 ## 작업 우선순위
