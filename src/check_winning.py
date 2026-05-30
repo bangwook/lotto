@@ -202,6 +202,25 @@ def _calc_latest_645_drawno() -> int:
     return weeks + 1
 
 
+def _calc_latest_720_drawno() -> int:
+    """현재 KST 기준 가장 최근 목요일 추첨 720+ 회차 추정.
+
+    1회 추첨일 = 2020-05-07 (목요일). 예: 316회=2026-05-21, 317회=2026-05-28.
+    결과 페이지·구매내역 회차 추출이 모두 실패할 때 '0회차' 방지용 fallback.
+    """
+    from datetime import date, datetime, timezone, timedelta
+    kst = timezone(timedelta(hours=9))
+    today = datetime.now(kst).date()
+    first_draw = date(2020, 5, 7)
+    # 가장 최근 목요일 (오늘 포함)
+    days_since_thu = (today.weekday() - 3) % 7  # Thu=0, Fri=1, ... Wed=6
+    last_thu = today - timedelta(days=days_since_thu)
+    if last_thu < first_draw:
+        return 0
+    weeks = (last_thu - first_draw).days // 7
+    return weeks + 1
+
+
 def calc_645_rank(my_numbers: list, winning: list, bonus: int) -> str:
     """645 등수 계산"""
     if not winning or len(winning) < 6:
@@ -636,7 +655,7 @@ def run(playwright: Playwright) -> None:
                     'rank': rank,
                 })
             send_720_winning(
-                round_no=win720['round'] or ledger_round_720,
+                round_no=win720['round'] or ledger_round_720 or _calc_latest_720_drawno(),
                 win_group=win720['group'],
                 win_digits=win720['winning'],
                 my_games=results_720,
