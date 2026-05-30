@@ -96,6 +96,12 @@
 ### 720 당첨 조회 실패 (BUG-2 지속)
 - 720-only 메시지는 여전히 "당첨 조회 실패". 모바일 URL + body 덤프 추가했으나 라이브 DOM 미확인이 블로커. 다음 실행 후 `debug_720_winning_body_*.txt` 필요.
 
+### BUG-8. 645 당첨번호 조회 전부 실패 (2026-05-31 lotto-check 로그)
+- **증상**: `645 API JSON 아님` + 모든 `gameResult.do?method=byWin` URL 에러 리다이렉트 → `0회: []`. 645 메시지에 당첨번호/등수 안 나옴. (state 볼륨 수정으로 내번호는 정상 복원됨.)
+- **원인 추정**: ① 페이지 컨텍스트 `fetch(getLottoNumber)` 가 headless/리다이렉트로 HTML 응답, ② 구버전 `gameResult.do?method=byWin` 경로가 에러로 리다이렉트(사이트가 `/lt645/result` 등 신경로로 이전 정황).
+- **수정 1차**: `_fetch_645_api_direct()` 추가 — 브라우저 밖 urllib 직접 호출(UA/Referer/X-Requested-With 헤더). 한국 IP(NAS)에서 정상 JSON 기대. 실패 시 ctype/body 일부 로그. 페이지 fetch 실패 로그도 body 스니펫 출력하도록 보강.
+- **남은 확인**: 직접 호출도 실패하면 로그의 `body[:120]` 로 차단/신경로 판단. 추첨일(토 20:45) 이전 실행이면 미발표가 정상.
+
 ---
 
 ## 작업 우선순위

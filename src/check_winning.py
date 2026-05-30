@@ -37,17 +37,63 @@ def get_645_winning_numbers(page: Page, draw_no: int = 0) -> dict:
         if attempt_no <= 0:
             continue
 
-        # 1) API 시도
+        # 1) 공개 JSON API 직접 호출 (브라우저 밖, 헤더 위장) - 페이지 내 fetch 차단 우회
+        direct_result = _fetch_645_api_direct(attempt_no)
+        if direct_result:
+            return direct_result
+
+        # 2) 페이지 컨텍스트 fetch (세션 쿠키 포함)
         api_result = _fetch_645_api(page, attempt_no)
         if api_result:
             return api_result
 
-        # 2) DOM 스크래핑 fallback
+        # 3) DOM 스크래핑 fallback
         dom_result = _scrape_645_result_page(page, attempt_no)
         if dom_result:
             return dom_result
 
     return {'round': 0, 'winning': [], 'bonus': None, 'date': ''}
+
+
+def _fetch_645_api_direct(draw_no: int) -> dict:
+    """공개 JSON API를 브라우저 외부에서 직접 호출.
+
+    페이지 내 fetch 가 headless/리다이렉트로 HTML 을 받는 케이스를 우회. 한국 IP(NAS)에서
+    UA/Referer/X-Requested-With 헤더를 갖춰 호출하면 정상 JSON 반환이 기대됨.
+    실패/HTML 응답이면 내용 일부를 로그로 남기고 None.
+    """
+    url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={draw_no}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Referer': 'https://www.dhlottery.co.kr/gameResult.do?method=byWin',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            ctype = r.headers.get('content-type', '')
+            text = r.read().decode('utf-8', errors='replace')
+    except Exception as e:
+        print(f'  ↪ 645 API(direct) 요청 실패 ({draw_no}회): {e}')
+        return None
+    try:
+        parsed = jsonlib.loads(text)
+    except Exception:
+        print(f'  ↪ 645 API(direct) JSON 아님 ({draw_no}회) ctype={ctype} body[:120]={text[:120]!r}')
+        return None
+    if parsed.get('returnValue') != 'success':
+        print(f'  ↪ 645 API(direct) 미발표 ({draw_no}회): returnValue={parsed.get("returnValue")}')
+        return None
+    winning = [parsed.get(f'drwtNo{i}') for i in range(1, 7)]
+    print(f'  ✅ 645 API(direct) 성공 ({draw_no}회)')
+    return {
+        'round': int(parsed.get('drwNo') or draw_no),
+        'winning': [int(n) for n in winning if n is not None],
+        'bonus': int(parsed['bnusNo']) if parsed.get('bnusNo') else None,
+        'date': parsed.get('drwNoDate', ''),
+    }
 
 
 def _fetch_645_api(page: Page, draw_no: int) -> dict:
@@ -62,7 +108,8 @@ def _fetch_645_api(page: Page, draw_no: int) -> dict:
                 const text = await r.text();
                 let parsed = null;
                 try { parsed = JSON.parse(text); } catch (e) {}
-                return { status: r.status, contentType: r.headers.get('content-type') || '', parsed };
+                return { status: r.status, contentType: r.headers.get('content-type') || '',
+                         parsed, snippet: (text || '').substring(0, 120) };
             }""",
             draw_no,
         )
@@ -70,7 +117,8 @@ def _fetch_645_api(page: Page, draw_no: int) -> dict:
             return None
         parsed = result.get('parsed')
         if not parsed:
-            print(f'  ↪ 645 API JSON 아님 ({draw_no}회) → DOM fallback')
+            print(f'  ↪ 645 API(page) JSON 아님 ({draw_no}회) status={result.get("status")} '
+                  f'ctype={result.get("contentType")} body[:120]={result.get("snippet")!r}')
             return None
         if parsed.get('returnValue') != 'success':
             print(f'  ↪ 645 API 미발표 ({draw_no}회) → DOM fallback')
