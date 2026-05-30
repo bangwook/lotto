@@ -308,8 +308,14 @@ def buy_lotto720(page: Page, num_games: int, dry_run: bool = False) -> dict:
     numbers = collected_numbers[:num_games]
     print(f'🎱 최종 자동번호 {len(numbers)}/{num_games}게임: {numbers}')
 
-    # 회차 추출
-    round_no = _extract_720_round(page, direct_mode)
+    # 회차 결정: 날짜 기반 계산(판매 중=다음 추첨 회차)이 가장 신뢰도 높음.
+    # 페이지 텍스트의 "제 N 회"는 직전 추첨 결과 회차를 잡는 경우가 있어 한 주 밀림.
+    round_no = _calc_purchase_720_round()
+    if not round_no:
+        round_no = _extract_720_round(page, direct_mode)
+    extracted_round = _extract_720_round(page, direct_mode)
+    if extracted_round and extracted_round != round_no:
+        print(f'ℹ️ 720+ 회차: 계산={round_no}, 페이지추출={extracted_round} (계산값 사용)')
 
     # Confirm selection
     frame.locator(".lotto720_btn_confirm_number").click()
@@ -581,6 +587,24 @@ _PENSION_NUM_EXTRACT_JS = r"""
     return { games, debug };
 }
 """
+
+
+def _calc_purchase_720_round() -> int:
+    """구매 시점에 '판매 중'(= 다음 추첨) 720+ 회차를 날짜로 계산.
+
+    1회 추첨 = 2020-05-07(목). 예: 317회=2026-05-28(목), 318회=2026-06-04(목).
+    금요일 구매분은 다음 목요일 추첨분이므로, 오늘 이후 가장 가까운 목요일의 회차를 반환.
+    """
+    from datetime import date, datetime, timezone, timedelta
+    kst = timezone(timedelta(hours=9))
+    today = datetime.now(kst).date()
+    first_draw = date(2020, 5, 7)
+    days_until_thu = (3 - today.weekday()) % 7  # Thu=3; 오늘이 목이면 0(당일 회차)
+    next_thu = today + timedelta(days=days_until_thu)
+    if next_thu < first_draw:
+        return 0
+    weeks = (next_thu - first_draw).days // 7
+    return weeks + 1
 
 
 def _extract_720_round(page: Page, direct_mode: bool) -> int:
