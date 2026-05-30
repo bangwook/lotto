@@ -83,3 +83,16 @@ services:
       - ./state:/app/state
     command: ["python", "src/check_winning.py"]
     restart: "no"
+
+  # 텔레그램 버튼 봇 (상시 실행) - 구매/당첨확인/개수설정 콜백 처리
+  lotto-bot:
+    build: .
+    container_name: lotto-bot
+    environment:
+      - TZ=Asia/Seoul
+    env_file:
+      - .env.docker
+    volumes:
+      - ./state:/app/state
+    command: ["python", "src/bot.py"]
+    restart: unless-stopped

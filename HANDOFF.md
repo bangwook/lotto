@@ -18,7 +18,7 @@
 
 ### 코드 업데이트 명령어 (한 줄, NAS bash에 붙여넣기)
 ```bash
-cd /volume1/docker/lotto/lotto-main && for f in src/check_winning.py src/notify.py src/purchase_all.py src/lotto720.py src/login.py Dockerfile entrypoint.sh docker-compose.yml; do wget -O $f https://raw.githubusercontent.com/bangwook/lotto/main/$f; done && chmod +x entrypoint.sh
+cd /volume1/docker/lotto/lotto-main && for f in src/check_winning.py src/notify.py src/purchase_all.py src/lotto720.py src/login.py src/bot.py src/settings.py Dockerfile entrypoint.sh docker-compose.yml; do wget -O $f https://raw.githubusercontent.com/bangwook/lotto/main/$f; done && chmod +x entrypoint.sh
 ```
 
 ### Docker 서비스
@@ -30,6 +30,14 @@ cd /volume1/docker/lotto/lotto-main && for f in src/check_winning.py src/notify.
 | `lotto-check` | 645 + 720 당첨 확인 |
 | `lotto-check-645` | 645 당첨 확인만 |
 | `lotto-check-720` | 720+ 당첨 확인만 |
+| `lotto-bot` | **텔레그램 버튼 봇 (상시 실행, restart: unless-stopped)** |
+
+### 텔레그램 버튼 봇 (`lotto-bot`, `src/bot.py`)
+- long-polling 으로 콜백 수신. 버튼: 💰구매(2단계 확인 후 `purchase_all.py` 실행) / 🎯당첨확인(`check_winning.py` 실행) / ⚙️구매 개수 설정(645·720 매수 0~5).
+- 설정은 `state/settings.json` 에 저장(`src/settings.py`). `purchase_all.py` 가 이 파일을 우선 읽고, 없으면 env(`AUTO_GAMES`/`LOTTO720_GAMES`) 기본값 사용 → 스케줄 구매에도 동일 적용.
+- 모든 알림(`notify.py`)에 "🎰 메뉴 열기" 버튼이 붙어 어느 메시지에서도 메뉴 진입 가능.
+- `TELEGRAM_CHAT_ID` 와 일치하는 채팅만 응답(타인 조작 차단). 재시작 시 밀린 업데이트는 폐기(오발주 방지).
+- 기동: `docker-compose up -d --build lotto-bot` (백그라운드 상주). 중지: `docker-compose stop lotto-bot`.
 
 ### 실행 방법
 ```bash

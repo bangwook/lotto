@@ -11,8 +11,12 @@ def _escape(text: str) -> str:
     return html.escape(str(text)) if text else ''
 
 
-def _send_telegram(text: str):
-    """Telegram 메시지를 전송합니다."""
+# 알림에 붙는 메뉴 진입 버튼 (콜백은 상시 실행 중인 lotto-bot 이 처리)
+_MENU_BUTTON = {'inline_keyboard': [[{'text': '🎰 메뉴 열기', 'callback_data': 'menu'}]]}
+
+
+def _send_telegram(text: str, reply_markup: dict = _MENU_BUTTON):
+    """Telegram 메시지를 전송합니다. 기본적으로 메뉴 진입 버튼을 함께 보냄."""
     token = environ.get('TELEGRAM_BOT_TOKEN', '')
     chat_id = environ.get('TELEGRAM_CHAT_ID', '')
 
@@ -26,6 +30,8 @@ def _send_telegram(text: str):
         'text': text,
         'parse_mode': 'HTML',
     }
+    if reply_markup:
+        payload['reply_markup'] = reply_markup
 
     try:
         data = json.dumps(payload).encode('utf-8')

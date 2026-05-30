@@ -15,12 +15,15 @@ from login import login
 from lotto720 import buy_lotto720
 from notify import send_purchase_notification, send_error_notification, send_lotto645_notification, send_lotto720_notification
 import state as state_store
+import settings as settings_store
 
 # .env loading is handled by login module import
 
-AUTO_GAMES = int(environ.get('AUTO_GAMES', '0'))
+# 구매 개수는 settings.json(텔레그램 봇이 설정) 우선, 없으면 환경변수 기본값
+_CFG = settings_store.load()
+AUTO_GAMES = _CFG['auto_games']
 MANUAL_NUMBERS = json.loads(environ.get('MANUAL_NUMBERS', '[]'))
-LOTTO720_GAMES = int(environ.get('LOTTO720_GAMES', '0'))
+LOTTO720_GAMES = _CFG['lotto720_games']
 PURCHASE_TARGET = environ.get('PURCHASE_TARGET', 'all')  # 'all', '645', '720'
 
 
