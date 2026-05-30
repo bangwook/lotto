@@ -597,6 +597,7 @@ def run(playwright: Playwright) -> None:
         print(f"💰 잔액: {balance:,}원")
 
         # 645 결과 계산 및 알림
+        sent_645 = False
         if check_target in ('all', '645') and purchases['lotto645']:
             results_645 = []
             ledger_round = purchases['lotto645'][0].get('round', 0)
@@ -630,9 +631,13 @@ def run(playwright: Playwright) -> None:
                 balance=balance,
             )
             print(f'✅ 645 알림 전송')
+            sent_645 = True
 
         # 720 결과 계산 및 알림
         if check_target in ('all', '720') and purchases['lotto720']:
+            # 전체 확인 시 645 알림과 720 알림이 텔레그램에서 다닥다닥 붙지 않도록 간격
+            if sent_645:
+                time.sleep(3)
             results_720 = []
             ledger_round_720 = purchases['lotto720'][0].get('round', 0)
             saved_720 = state_store.load_720(ledger_round_720)

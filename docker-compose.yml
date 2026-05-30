@@ -51,6 +51,8 @@ services:
       - CHECK_TARGET=all
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     command: ["python", "src/check_winning.py"]
     restart: "no"
 
@@ -63,6 +65,8 @@ services:
       - CHECK_TARGET=645
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     command: ["python", "src/check_winning.py"]
     restart: "no"
 
@@ -75,5 +79,7 @@ services:
       - CHECK_TARGET=720
     env_file:
       - .env.docker
+    volumes:
+      - ./state:/app/state
     command: ["python", "src/check_winning.py"]
     restart: "no"

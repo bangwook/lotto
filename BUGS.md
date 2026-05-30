@@ -83,6 +83,21 @@
 
 ---
 
+## 2026-05-31 재보고 (사용자)
+
+### BUG-6. 당첨확인 645 번호가 state 대신 raw 긴 숫자로 표시 (단일/전체 공통)
+- **증상**: `lotto-check-645`(및 all) 실행 시 645 내번호가 구매 시 저장한 번호가 아니라 구매내역의 자릿수 패딩 없는 발권 코드(예 "63045 06832 35556 71920 59365 11766")로 표시됨.
+- **원인**: `docker-compose.yml` 의 당첨확인 서비스 3종(`lotto-check`, `lotto-check-645`, `lotto-check-720`)에 `./state:/app/state` 볼륨 마운트 누락. 구매 서비스만 마운트되어 있어 `state_store.load_645()` 가 컨테이너 로컬 빈 `/app/state` 를 읽음 → raw 텍스트 fallback.
+- **수정**: 당첨확인 3종에 `volumes: - ./state:/app/state` 추가. (이미지 재빌드 불필요, compose 갱신 후 재실행만)
+
+### BUG-7. 전체 당첨확인 시 645/720 텔레그램 메시지가 다닥다닥 붙음
+- **수정**: `check_winning.py:run()` 에서 645 알림 후 `sent_645` 플래그로 720 알림 직전 `time.sleep(3)` 삽입 (전체 확인일 때만 간격).
+
+### 720 당첨 조회 실패 (BUG-2 지속)
+- 720-only 메시지는 여전히 "당첨 조회 실패". 모바일 URL + body 덤프 추가했으나 라이브 DOM 미확인이 블로커. 다음 실행 후 `debug_720_winning_body_*.txt` 필요.
+
+---
+
 ## 작업 우선순위
 
 1. BUG-5 (Dockerfile apt-key): 수정 완료 → NAS `docker-compose build --no-cache lotto-all` 후 재실행 검증
